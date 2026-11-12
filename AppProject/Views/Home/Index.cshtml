@@ -1,0 +1,137 @@
+﻿@{
+    ViewData["Title"] = "ของเก่าเล่าเรื่อง";
+}
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <a class="brand" href="#" data-view-link="today" aria-label="ของเก่าเล่าเรื่อง หน้าแรก">
+            <span class="brand-mark">ก</span>
+            <span><strong>ของเก่าเล่าเรื่อง</strong><small>OLD THINGS, NEW STORIES</small></span>
+        </a>
+        <div class="sidebar-label">เมนูหลัก</div>
+        <nav class="side-nav" aria-label="เมนูหลัก">
+            <button class="nav-item active" data-view-link="today"><span class="nav-icon">⌂</span> ประมูลวันนี้ <span class="nav-count">วันนี้</span></button>
+            <button class="nav-item" data-view-link="mybids"><span class="nav-icon">♡</span> รายการที่สนใจ</button>
+            <button class="nav-item" data-view-link="sell"><span class="nav-icon">＋</span> ลงขายสินค้า</button>
+            <button class="nav-item" data-view-link="messages"><span class="nav-icon">▤</span> กล่องข้อความ <span class="unread-dot"></span></button>
+            <button class="nav-item" data-view-link="payments"><span class="nav-icon">▣</span> ชำระเงิน</button>
+        </nav>
+        <div class="sidebar-label admin-label">จัดการระบบ</div>
+        <nav class="side-nav" aria-label="จัดการระบบ">
+            <button class="nav-item" data-view-link="admin"><span class="nav-icon">◈</span> ตรวจสอบสินค้า</button>
+            <button class="nav-item" data-view-link="winners"><span class="nav-icon">♙</span> ประวัติผู้ชนะ</button>
+        </nav>
+        <div class="sidebar-bottom">
+            <div class="meetup-note"><span class="meetup-icon">⌖</span><strong>นัดรับอย่างสบายใจ</strong><p>ตกลงสถานที่และเวลารับสินค้ากับผู้ขายได้โดยตรง</p></div>
+            <button class="profile-button"><span class="avatar">พ</span><span><strong>พิมพ์ชนก</strong><small>สมาชิกนักสะสม</small></span><span class="more">···</span></button>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <header class="topbar">
+            <div class="mobile-brand"><span class="brand-mark">ก</span><strong>ของเก่าเล่าเรื่อง</strong></div>
+            <div class="breadcrumbs"><span>หน้าหลัก</span><span class="crumb-sep">/</span><strong id="pageCrumb">ประมูลวันนี้</strong></div>
+            <div class="top-actions">
+                <label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="ค้นหาของสะสม..." aria-label="ค้นหาของสะสม"></label>
+                <button class="icon-button notification-button" aria-label="การแจ้งเตือน">♧<i></i></button>
+                <span class="top-avatar">พ</span>
+            </div>
+        </header>
+
+        <section class="view-panel active" id="view-today">
+            <div class="today-heading">
+                <div><p class="eyebrow"><span class="eyebrow-line"></span> ตลาดของสะสมประจำวัน</p><h1>ของดีวันนี้ <span class="heading-period">คัดมาให้คุณ</span></h1>
+                    <p class="intro">ทุกชิ้นมีเรื่องราว — เลือกชิ้นที่ใช่ แล้วร่วมประมูลไปด้วยกัน</p></div>
+                <div class="date-card"><span class="date-icon">▦</span><span><small>วันประมูล</small><strong id="todayDate"></strong></span></div>
+            </div>
+
+            <div class="hero-banner">
+                <div class="hero-copy"><span class="hero-kicker">THE DAILY FINDS · คัดสรรประจำวัน</span><h2>ของเก่าที่มีเสน่ห์<br>กำลังรอเจ้าของคนใหม่</h2><p>ชิ้นงานหายากจากนักสะสมทั่วไทย นัดรับได้จริง ทุกการประมูลโปร่งใส</p><button class="button button-light" data-scroll="auctionGrid">เลือกดูของวันนี้ <span>→</span></button></div>
+                <div class="hero-art" aria-hidden="true"><div class="sun-disc"></div><div class="hero-vase"></div><span class="hero-stamp">VINTAGE<br>FINDS</span><span class="hero-leaf">✳</span></div>
+                <div class="hero-pagination"><span class="current">01</span><span class="hero-rule"></span><span>03</span></div>
+            </div>
+
+            <div class="section-heading category-heading"><div><h2>เลือกตามหมวดหมู่</h2><p>ของสะสมที่คุณหลงใหล</p></div><button class="text-button" data-category="all">ดูทั้งหมด <span>→</span></button></div>
+            <div class="category-row" aria-label="เลือกหมวดหมู่">
+                <button class="category-chip active" data-category="all"><span class="category-symbol">✦</span><span>ทั้งหมด</span><small>12 รายการ</small></button>
+                <button class="category-chip" data-category="เครื่องครัว"><span class="category-symbol">♨</span><span>เครื่องครัว</span><small>ส่วนลด 10%</small></button>
+                <button class="category-chip" data-category="ชาและเซรามิก"><span class="category-symbol">◌</span><span>ชาและเซรามิก</span><small>ส่วนลด 15%</small></button>
+                <button class="category-chip" data-category="เหรียญสะสม"><span class="category-symbol">◎</span><span>เหรียญสะสม</span><small>ส่วนลด 8%</small></button>
+                <button class="category-chip" data-category="ของแต่งบ้าน"><span class="category-symbol">⌂</span><span>ของแต่งบ้าน</span><small>ดูทั้งหมด →</small></button>
+            </div>
+
+            <div class="section-heading listing-heading" id="auctionGrid"><div><h2>กำลังเปิดประมูล <span class="live-count" id="liveCount">04</span></h2><p>ร่วมประมูลก่อนหมดเวลา แล้วเป็นเจ้าของชิ้นพิเศษ</p></div>
+                <div class="sort-controls"><button class="sort-button active" data-sort="ending">ใกล้หมดเวลา</button><button class="sort-button" data-sort="newest">มาใหม่</button><button class="view-toggle" aria-label="มุมมองรายการ">▦</button></div></div>
+            <div class="product-grid" id="productGrid"></div>
+            <div class="empty-state hidden" id="emptyState">ไม่พบสินค้าที่ตรงกับการค้นหา ลองเปลี่ยนคำค้นหรือหมวดหมู่ดูนะ</div>
+            <div class="how-it-works"><div class="how-title"><span>เริ่มสะสมได้ง่ายๆ</span><strong>ประมูลอย่างมั่นใจใน 3 ขั้นตอน</strong></div><div class="how-step"><span>01</span><div><strong>เลือกของที่ชอบ</strong><small>ดูรายละเอียดและประวัติราคา</small></div></div><div class="how-step"><span>02</span><div><strong>เสนอราคา</strong><small>ระบบแจ้งเตือนเมื่อมีคนเสนอสูงกว่า</small></div></div><div class="how-step"><span>03</span><div><strong>นัดรับและชำระเงิน</strong><small>ตกลงนัดรับกับผู้ขายโดยตรง</small></div></div></div>
+        </section>
+
+        <section class="view-panel" id="view-mybids">
+            <div class="page-heading"><p class="eyebrow"><span class="eyebrow-line"></span> YOUR COLLECTION</p><h1>รายการที่สนใจ</h1><p class="intro">ของสะสมที่คุณบันทึกไว้และรายการที่กำลังประมูล</p></div>
+            <div class="section-heading"><div><h2>รายการที่บันทึกไว้</h2><p>ไม่พลาดชิ้นที่คุณหมายตา</p></div></div>
+            <div class="product-grid" id="savedGrid"></div>
+            <div class="empty-state" id="savedEmpty">กดรูปหัวใจบนสินค้าที่สนใจ เพื่อบันทึกไว้ที่นี่</div>
+            <div class="section-heading personal-history-heading"><div><h2>ประวัติการเสนอราคา</h2><p>ติดตามการประมูลล่าสุดของคุณ</p></div></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>รายการสินค้า</th><th>ราคาเสนอ</th><th>สถานะ</th><th>เวลา</th></tr></thead><tbody id="bidHistoryRows"><tr class="empty-row"><td colspan="4">คุณยังไม่มีประวัติการเสนอราคา</td></tr></tbody></table></div>
+        </section>
+
+        <section class="view-panel" id="view-sell">
+            <div class="page-heading"><p class="eyebrow"><span class="eyebrow-line"></span> SELL YOUR STORY</p><h1>ลงขายของสะสม</h1><p class="intro">ส่งต่อของที่มีเรื่องราวให้เจ้าของคนใหม่ สินค้าจะเริ่มประมูลหลังแอดมินตรวจสอบ</p></div>
+            <div class="form-layout"><form class="listing-form" id="listingForm">
+                <div class="form-card"><div class="form-card-heading"><span class="form-step">01</span><div><h2>รายละเอียดสินค้า</h2><p>เล่าเรื่องของสะสมชิ้นนี้ให้ผู้ประมูลรู้จัก</p></div></div>
+                    <label class="field-label">ชื่อสินค้า <span>*</span><input name="name" required maxlength="70" placeholder="เช่น มีดครัวญี่ปุ่นตีมือ รุ่นปี 1970"></label>
+                    <div class="field-row"><label class="field-label">หมวดหมู่ <span>*</span><select name="category" required><option value="">เลือกหมวดหมู่</option><option>เครื่องครัว</option><option>ชาและเซรามิก</option><option>เหรียญสะสม</option><option>ของแต่งบ้าน</option></select></label><label class="field-label">สภาพสินค้า <span>*</span><select name="condition" required><option value="">เลือกสภาพ</option><option>ดีมาก — เก็บสะสม</option><option>ดี — มีร่องรอยตามอายุ</option><option>ผ่านการใช้งาน</option></select></label></div>
+                    <label class="field-label">รายละเอียดและประวัติ <span>*</span><textarea name="description" rows="4" required placeholder="ที่มา อายุโดยประมาณ วัสดุ และตำหนิ (ถ้ามี)"></textarea></label>
+                    <label class="field-label">ลิงก์รูปภาพสินค้า <input name="image" type="url" placeholder="https://example.com/image.jpg"><small class="field-hint">ใส่ URL รูปภาพเพื่อแสดงตัวอย่างในรายการประมูล</small></label>
+                </div>
+                <div class="form-card"><div class="form-card-heading"><span class="form-step">02</span><div><h2>ตั้งค่าการประมูล</h2><p>กำหนดราคาและช่วงเวลาที่เปิดประมูล</p></div></div>
+                    <div class="field-row"><label class="field-label">ราคาเริ่มต้น (บาท) <span>*</span><input name="startingPrice" type="number" min="1" step="1" required placeholder="เช่น 500"></label><label class="field-label">ขั้นต่ำต่อครั้ง (บาท) <input name="increment" type="number" min="1" step="1" value="50"></label></div>
+                    <div class="field-row"><label class="field-label">เริ่มประมูล <span>*</span><input name="startAt" type="datetime-local" required></label><label class="field-label">สิ้นสุดประมูล <span>*</span><input name="endAt" type="datetime-local" required></label></div>
+                    <div class="notice-box"><span>ⓘ</span><p>การจัดส่งเป็นการนัดรับ ผู้ชนะและผู้ขายจะตกลงสถานที่และเวลาผ่านกล่องข้อความหลังชำระเงิน</p></div>
+                    <button class="button button-primary submit-listing" type="submit">ส่งให้แอดมินตรวจสอบ <span>→</span></button>
+                </div>
+            </form><aside class="seller-aside"><div class="seller-tip"><span class="tip-icon">✦</span><h3>เคล็ดลับผู้ขาย</h3><ul><li>ถ่ายภาพให้เห็นรายละเอียดและตำหนิชัดเจน</li><li>บอกที่มาและอายุโดยประมาณของสินค้า</li><li>ตั้งราคาเริ่มต้นที่เหมาะสมเพื่อชวนประมูล</li></ul></div><div class="seller-status"><strong>ขั้นตอนการลงขาย</strong><div><i class="step-done">✓</i><span>ส่งรายละเอียดสินค้า</span></div><div><i>2</i><span>รอแอดมินตรวจสอบ</span></div><div><i>3</i><span>เริ่มเปิดประมูล</span></div></div></aside></div>
+            <div class="section-heading personal-history-heading"><div><h2>สินค้าของฉัน</h2><p>รายการที่คุณส่งให้ตรวจสอบ</p></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>ชื่อสินค้า</th><th>ราคาเริ่มต้น</th><th>ช่วงเวลา</th><th>สถานะ</th></tr></thead><tbody id="sellerRows"><tr class="empty-row"><td colspan="4">ยังไม่มีสินค้าที่ลงขาย</td></tr></tbody></table></div>
+        </section>
+
+        <section class="view-panel" id="view-messages">
+            <div class="page-heading"><p class="eyebrow"><span class="eyebrow-line"></span> TALK & MEET</p><h1>กล่องข้อความ</h1><p class="intro">คุยรายละเอียดสินค้าและนัดรับกับนักสะสมโดยตรง</p></div>
+            <div class="chat-layout"><aside class="conversation-list"><div class="conversation-search"><span>⌕</span><input type="search" placeholder="ค้นหาบทสนทนา"></div><button class="conversation active"><span class="chat-avatar">ช</span><span class="conversation-copy"><strong>คุณชาญชัย · มีดครัวญี่ปุ่น</strong><small>สะดวกนัดรับวันเสาร์ไหมครับ?</small></span><time>10:42</time></button><button class="conversation"><span class="chat-avatar avatar-olive">ร</span><span class="conversation-copy"><strong>คุณรัตนา · ชุดชงชาโบราณ</strong><small>ขอบคุณค่ะ เดี๋ยวส่งพิกัดให้นะคะ</small></span><time>เมื่อวาน</time></button><div class="conversation-empty hidden">ยังไม่มีบทสนทนา</div></aside>
+                <div class="chat-window"><div class="chat-header"><span class="chat-avatar">ช</span><span><strong>คุณชาญชัย</strong><small>เกี่ยวกับ มีดครัวญี่ปุ่นตีมือ</small></span><button class="chat-item-link" data-product="knife">ดูสินค้า ↗</button></div><div class="chat-messages" id="chatMessages"><div class="chat-date">วันนี้ 11 พฤศจิกายน</div><div class="chat-bubble received">สวัสดีครับ สนใจมีดชิ้นนี้อยู่ อยากทราบว่ามีรอยบิ่นตรงคมหรือเปล่าครับ?<small>10:30</small></div><div class="chat-bubble sent">สวัสดีค่ะ ไม่มีรอยบิ่นนะคะ มีรอยใช้งานเล็กน้อยตามอายุ เดี๋ยวถ่ายรูปเพิ่มให้ค่ะ<small>10:36</small></div><div class="chat-bubble received">สะดวกนัดรับวันเสาร์ไหมครับ? ผมอยู่แถวจตุจักรครับ<small>10:42</small></div></div><form class="chat-compose" id="chatForm"><input id="chatInput" placeholder="พิมพ์ข้อความ..." autocomplete="off" aria-label="พิมพ์ข้อความ"><button type="submit" aria-label="ส่งข้อความ">↑</button></form></div></div>
+        </section>
+
+        <section class="view-panel" id="view-payments">
+            <div class="page-heading"><p class="eyebrow"><span class="eyebrow-line"></span> SECURE CHECKOUT</p><h1>รายการที่ต้องชำระ</h1><p class="intro">ยินดีด้วย! ชิ้นพิเศษกำลังจะเป็นของคุณ นัดรับกับผู้ขายหลังชำระเงิน</p></div>
+            <div id="paymentList" class="payment-list"><div class="empty-state">ยังไม่มีรายการที่ชนะการประมูล เมื่อชนะแล้วรายการจะปรากฏที่นี่</div></div>
+            <div class="payment-assurance"><span>♧</span><div><strong>ชำระเงินอย่างมั่นใจ</strong><p>ตรวจสอบรายละเอียดผู้ขายและยืนยันนัดรับได้ในกล่องข้อความ</p></div></div>
+        </section>
+
+        <section class="view-panel" id="view-admin">
+            <div class="page-heading"><p class="eyebrow"><span class="eyebrow-line"></span> ADMIN WORKSPACE</p><h1>ตรวจสอบสินค้า</h1><p class="intro">ตรวจสอบรายละเอียดและอนุมัติสินค้าก่อนเริ่มเปิดประมูล</p></div>
+            <div class="admin-stats"><div><small>รอตรวจสอบ</small><strong id="pendingCount">02</strong><span>รายการใหม่</span></div><div><small>กำลังประมูล</small><strong id="adminLiveCount">04</strong><span>รายการ</span></div><div><small>ผู้ชนะวันนี้</small><strong id="winnerCount">01</strong><span>รายการ</span></div></div>
+            <div class="section-heading"><div><h2>สินค้ารออนุมัติ</h2><p>ตรวจสอบความครบถ้วนก่อนเผยแพร่</p></div><span class="admin-tag">ADMIN</span></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>สินค้า</th><th>ผู้ขาย</th><th>ราคาเริ่มต้น</th><th>เวลาประมูล</th><th>การตรวจสอบ</th></tr></thead><tbody id="adminRows"></tbody></table></div>
+            <div class="moderation-note"><span>ⓘ</span><p>ตรวจสอบความเหมาะสมของสินค้า ภาพถ่าย และรายละเอียดก่อนอนุมัติ สินค้าที่ผิดกติกาสามารถปฏิเสธได้</p></div>
+        </section>
+
+        <section class="view-panel" id="view-winners">
+            <div class="page-heading"><p class="eyebrow"><span class="eyebrow-line"></span> AUCTION ARCHIVE</p><h1>ประวัติผู้ชนะ</h1><p class="intro">ติดตามผลประมูลและสินค้าที่ส่งต่อถึงนักสะสมคนใหม่</p></div>
+            <div class="admin-stats"><div><small>ปิดประมูลแล้ว</small><strong id="closedCount">01</strong><span>รายการ</span></div><div><small>มูลค่ารวม</small><strong>฿8,450</strong><span>ยอดประมูล</span></div><div><small>นัดรับสำเร็จ</small><strong>92%</strong><span>จากรายการทั้งหมด</span></div></div>
+            <div class="section-heading"><div><h2>รายการผู้ชนะล่าสุด</h2><p>ข้อมูลผลการประมูลย้อนหลัง</p></div><button class="sort-button">ทั้งหมด <span>⌄</span></button></div>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>สินค้า</th><th>ผู้ชนะ</th><th>ราคาปิด</th><th>วันที่ปิด</th><th>สถานะนัดรับ</th></tr></thead><tbody id="winnerRows"><tr><td><span class="table-product"><span class="table-thumb coin-thumb"></span><span><strong>เหรียญ 1 บาท ร.5</strong><small>เหรียญสะสม · #AUC-0019</small></span></span></td><td>คุณธนกร</td><td class="table-price">฿2,450</td><td>10 พ.ย. 2569</td><td><span class="status-pill status-green">นัดรับสำเร็จ</span></td></tr></tbody></table></div>
+        </section>
+
+        <footer class="page-footer"><span>© 2569 ของเก่าเล่าเรื่อง</span><span>สะสมอย่างมีเรื่องราว · นัดรับทุกชิ้น</span><a href="#" data-view-link="today">กลับหน้าหลัก ↑</a></footer>
+    </main>
+</div>
+
+<dialog class="auction-dialog" id="auctionDialog">
+    <form method="dialog"><button class="dialog-close" aria-label="ปิด">×</button></form>
+    <div id="dialogContent"></div>
+</dialog>
+<div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+@section Scripts {
+    <script src="~/js/site.js" asp-append-version="true"></script>
+}
