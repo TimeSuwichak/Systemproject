@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<Dispute> Disputes => Set<Dispute>();
     public DbSet<FinanceSettings> FinanceSettings => Set<FinanceSettings>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -94,6 +95,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             entity.HasOne(d => d.Conversation).WithMany(c => c.Disputes).HasForeignKey(d => d.ConversationId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(d => d.OrderPayment).WithMany().HasForeignKey(d => d.OrderPaymentId).OnDelete(DeleteBehavior.SetNull);
             entity.HasOne(d => d.Reporter).WithMany().HasForeignKey(d => d.ReporterId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            entity.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt });
+            entity.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -155,6 +155,16 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
             target.Role = Roles.Seller;
             target.SellerStatus = SellerStatuses.Approved;
             target.SellerRejectReason = null;
+            Db.Notifications.Add(new Notification
+            {
+                UserId = target.Id,
+                Type = "seller",
+                Title = "ใบสมัครผู้ขายได้รับการอนุมัติแล้ว",
+                Body = $"ยินดีด้วย! ร้าน “{target.ShopName}” ได้รับการอนุมัติแล้ว คุณสามารถลงขายสินค้าได้ทันที",
+                TargetView = "sell",
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            });
         }
         else
         {
@@ -162,6 +172,16 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 return BadRequest(new { message = "กรุณาระบุเหตุผลในการปฏิเสธใบสมัครผู้ขาย" });
             target.SellerStatus = SellerStatuses.Rejected;
             target.SellerRejectReason = req.Reason.Trim();
+            Db.Notifications.Add(new Notification
+            {
+                UserId = target.Id,
+                Type = "seller",
+                Title = "ใบสมัครผู้ขายไม่ผ่านการอนุมัติ",
+                Body = $"เหตุผล: {target.SellerRejectReason}",
+                TargetView = target.Role == Roles.Seller ? "sell" : "apply-seller",
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            });
         }
 
         await Db.SaveChangesAsync();
@@ -183,6 +203,17 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
             // Ensure end date is still in future if seller picked close time
             if (item.EndAt <= DateTime.UtcNow)
                 item.EndAt = DateTime.UtcNow.AddHours(24);
+            Db.Notifications.Add(new Notification
+            {
+                UserId = item.SellerId,
+                Type = "auction",
+                Title = "สินค้าได้รับการอนุมัติเปิดประมูลแล้ว",
+                Body = $"สินค้า “{item.Name}” ผ่านการตรวจสอบและเริ่มแสดงในรายการประมูลแล้ว",
+                TargetView = "sell",
+                ReferenceId = item.Id,
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            });
         }
         else
         {
@@ -190,6 +221,17 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 return BadRequest(new { message = "กรุณาระบุเหตุผลในการปฏิเสธสินค้า" });
             item.Status = AuctionStatuses.Rejected;
             item.RejectReason = req.Reason.Trim();
+            Db.Notifications.Add(new Notification
+            {
+                UserId = item.SellerId,
+                Type = "auction",
+                Title = "สินค้าถูกปฏิเสธการอนุมัติ",
+                Body = $"สินค้า “{item.Name}” — เหตุผล: {item.RejectReason}",
+                TargetView = "sell",
+                ReferenceId = item.Id,
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            });
         }
 
         await Db.SaveChangesAsync();

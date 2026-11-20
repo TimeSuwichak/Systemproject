@@ -249,9 +249,35 @@ public class Conversation
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? BuyerLastReadAt { get; set; }
+    public DateTime? SellerLastReadAt { get; set; }
 
     public List<ChatMessage> Messages { get; set; } = [];
     public List<Dispute> Disputes { get; set; } = [];
+}
+
+public class Notification
+{
+    public int Id { get; set; }
+
+    public int UserId { get; set; }
+    public User? User { get; set; }
+
+    [Required, MaxLength(40)]
+    public string Type { get; set; } = "info";
+
+    [Required, MaxLength(140)]
+    public string Title { get; set; } = string.Empty;
+
+    [Required, MaxLength(500)]
+    public string Body { get; set; } = string.Empty;
+
+    [MaxLength(40)]
+    public string? TargetView { get; set; }
+
+    public int? ReferenceId { get; set; }
+    public bool IsRead { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class ChatMessage

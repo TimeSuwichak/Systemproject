@@ -40,18 +40,27 @@
   let activeConversationId = null;
   let selectedProductId = null;
   let demoAccountsCache = [];
+  let unreadMessagesCount = 0;
+  let lastNotifiedMessageId = null;
+  let notifPollTimer = null;
 
   const toastRegion = document.getElementById("toastRegion");
   const auctionDialog = document.getElementById("auctionDialog");
   const authDialog = document.getElementById("authDialog");
   const actionDialog = document.getElementById("actionDialog");
 
-  function showToast(message, isError = false) {
+  function showToast(message, isError = false, onClick = null) {
     const toast = document.createElement("div");
-    toast.className = `toast${isError ? " error" : ""}`;
+    toast.className = `toast${isError ? " error" : ""}${onClick ? " clickable" : ""}`;
     toast.textContent = message;
+    if (onClick) {
+      toast.addEventListener("click", () => {
+        toast.remove();
+        onClick();
+      });
+    }
     toastRegion.append(toast);
-    window.setTimeout(() => toast.remove(), 3800);
+    window.setTimeout(() => toast.remove(), onClick ? 6000 : 3800);
   }
 
   function escapeHtml(value) {
@@ -236,6 +245,7 @@
         ${sec.items.map(it => `
           <button class="nav-item${activeView === it.view ? " active" : ""}" type="button" data-view-link="${it.view}">
             <span class="nav-icon">${it.icon}</span> ${escapeHtml(it.label)}
+            ${it.view === "messages" ? `<span class="nav-count warn${unreadMessagesCount > 0 ? "" : " hidden"}" id="navUnreadMessagesBadge">${unreadMessagesCount}</span>` : ""}
           </button>
         `).join("")}
       </nav>
@@ -320,9 +330,26 @@
 
   async function refreshSession(goDefaultView = false) {
     const me = await api("/api/auth/me");
+    const prevUserId = currentUser?.id || null;
     currentUser = me.authenticated ? me.user : null;
     if (me.settings) globalSettings = me.settings;
+
+    if ((currentUser?.id || null) !== prevUserId) {
+      lastNotifiedMessageId = null;
+      unreadMessagesCount = 0;
+      activeConversationId = null;
+    }
+
+    const notifWrapper = document.getElementById("notifWrapper");
+    if (notifWrapper) notifWrapper.classList.toggle("hidden", !currentUser);
+    document.getElementById("notifDropdown")?.classList.add("hidden");
+
     buildSidebar();
+
+    if (notifPollTimer) {
+      window.clearInterval(notifPollTimer);
+      notifPollTimer = null;
+    }
 
     if (goDefaultView) {
       const defaultByRole = {
@@ -334,6 +361,82 @@
       await switchView(currentUser ? (defaultByRole[currentUser.role] || "today") : "today");
     } else {
       await switchView(activeView);
+    }
+
+    if (currentUser) {
+      await pollNotifications(true);
+      notifPollTimer = window.setInterval(() => pollNotifications(false), 5000);
+    }
+  }
+
+  async function pollNotifications(isInitial = false) {
+    if (!currentUser) return;
+    try {
+      const data = await api("/api/notifications/summary");
+      unreadMessagesCount = data.unreadMessagesCount || 0;
+
+      // Update sidebar messages badge
+      const navBadge = document.getElementById("navUnreadMessagesBadge");
+      if (navBadge) {
+        navBadge.textContent = unreadMessagesCount > 99 ? "99+" : String(unreadMessagesCount);
+        navBadge.classList.toggle("hidden", unreadMessagesCount <= 0);
+      }
+
+      // Update topbar bell badge
+      const bellBadge = document.getElementById("notifBadge");
+      const total = data.totalCount || 0;
+      if (bellBadge) {
+        bellBadge.textContent = total > 99 ? "99+" : String(total);
+        bellBadge.classList.toggle("hidden", total <= 0);
+      }
+
+      // Render dropdown items
+      const listEl = document.getElementById("notifDropdownList");
+      if (listEl) {
+        const alertHtml = (data.roleAlerts || []).map(a => `
+          <button type="button" class="notif-item unread" data-notif-view="${escapeHtml(a.view)}">
+            <div class="notif-item-top"><strong><span class="notif-dot"></span>${escapeHtml(a.title)}</strong></div>
+            <p>${escapeHtml(a.body)}</p>
+          </button>`).join("");
+
+        const notifHtml = (data.notifications || []).map(n => `
+          <button type="button" class="notif-item${n.isRead ? "" : " unread"}"
+            data-notif-id="${n.id}"
+            data-notif-view="${escapeHtml(n.targetView || "")}"
+            data-notif-ref="${n.referenceId || ""}">
+            <div class="notif-item-top">
+              <strong>${n.isRead ? "" : `<span class="notif-dot"></span>`}${escapeHtml(n.title)}</strong>
+              <time>${formatDateTime(n.createdAt)}</time>
+            </div>
+            <p>${escapeHtml(n.body)}</p>
+          </button>`).join("");
+
+        listEl.innerHTML = (alertHtml + notifHtml) || `<div class="notif-empty">ไม่มีการแจ้งเตือนใหม่</div>`;
+      }
+
+      // Live incoming chat message notification + live refresh
+      const latestId = data.latestMessageId || 0;
+      const incoming = data.latestIncomingMessage;
+      if (isInitial || lastNotifiedMessageId === null) {
+        lastNotifiedMessageId = latestId;
+      } else if (latestId > lastNotifiedMessageId && incoming) {
+        lastNotifiedMessageId = latestId;
+        if (activeView === "messages" && activeConversationId === incoming.conversationId) {
+          await openConversation(incoming.conversationId);
+        } else {
+          const snippet = incoming.body.length > 60 ? `${incoming.body.slice(0, 60)}…` : incoming.body;
+          showToast(`💬 ข้อความใหม่จาก ${incoming.senderName}: ${snippet}`, false, async () => {
+            activeConversationId = incoming.conversationId;
+            await switchView("messages");
+          });
+          if (activeView === "messages") {
+            conversationsCache = await api("/api/chat/conversations");
+            renderConversationList();
+          }
+        }
+      }
+    } catch {
+      // Ignore transient poll errors
     }
   }
 
@@ -710,23 +813,27 @@
 
     document.getElementById("conversationItems").innerHTML = list.length
       ? list.map(c => `
-        <button class="conversation${c.id === activeConversationId ? " active" : ""}" type="button" data-select-conv="${c.id}">
+        <button class="conversation${c.id === activeConversationId ? " active" : ""}${c.unreadCount > 0 ? " has-unread" : ""}" type="button" data-select-conv="${c.id}">
           <span class="chat-avatar">${escapeHtml((c.peerName || "?").charAt(0))}</span>
           <span class="conversation-copy">
             <strong>${escapeHtml(c.peerName)} · ${escapeHtml(c.itemName)}</strong>
             <small>${c.hasOpenDispute ? "⚑ มีข้อพิพาท · " : ""}${escapeHtml(c.lastMessage)}</small>
           </span>
-          <time>${formatDateShort(c.lastSentAt)}</time>
+          <span class="conv-meta">
+            <time>${formatDateShort(c.lastSentAt)}</time>
+            ${c.unreadCount > 0 ? `<span class="conv-unread-pill">${c.unreadCount}</span>` : ""}
+          </span>
         </button>`).join("")
       : `<div class="empty-state" style="border:0;">ไม่พบบทสนทนา</div>`;
   }
 
   async function openConversation(convId) {
     activeConversationId = convId;
-    renderConversationList();
-
     const conv = await api(`/api/chat/conversations/${convId}/messages`);
     const summary = conversationsCache.find(c => c.id === convId);
+    if (summary) summary.unreadCount = 0;
+    renderConversationList();
+    pollNotifications(true);
 
     document.getElementById("chatHeader").innerHTML = `
       <span class="chat-avatar">${escapeHtml((conv.peerName || "?").charAt(0))}</span>
@@ -1089,14 +1196,15 @@
   // Login Form
   document.getElementById("loginForm").addEventListener("submit", async e => {
     e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     try {
       const res = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") })
       });
       authDialog.close();
-      e.currentTarget.reset();
+      form.reset();
       showToast(res.message);
       await refreshSession(true);
     } catch (err) { showToast(err.message, true); }
@@ -1105,7 +1213,8 @@
   // Register Form
   document.getElementById("registerForm").addEventListener("submit", async e => {
     e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     try {
       const res = await api("/api/auth/register", {
         method: "POST",
@@ -1121,9 +1230,32 @@
         })
       });
       authDialog.close();
-      e.currentTarget.reset();
+      form.reset();
+      document.getElementById("regSellerFields").classList.add("hidden");
+      document.querySelectorAll("#regSellerFields input[name='shopName'], #regSellerFields input[name='phone'], #regSellerFields input[name='bankAccount']")
+        .forEach(inp => { inp.required = false; });
       showToast(res.message);
       await refreshSession(true);
+    } catch (err) { showToast(err.message, true); }
+  });
+
+  // Notification Bell Toggle & Mark All Read
+  document.getElementById("notifBellBtn")?.addEventListener("click", async e => {
+    e.stopPropagation();
+    const dropdown = document.getElementById("notifDropdown");
+    const isOpening = dropdown.classList.contains("hidden");
+    dropdown.classList.toggle("hidden");
+    if (isOpening) await pollNotifications(true);
+  });
+
+  document.getElementById("markAllReadBtn")?.addEventListener("click", async e => {
+    e.stopPropagation();
+    try {
+      await api("/api/notifications/read-all", { method: "POST" });
+      conversationsCache.forEach(c => { c.unreadCount = 0; });
+      if (activeView === "messages") renderConversationList();
+      await pollNotifications(true);
+      showToast("ทำเครื่องหมายว่าอ่านทั้งหมดแล้ว");
     } catch (err) { showToast(err.message, true); }
   });
 
@@ -1284,6 +1416,29 @@
   document.addEventListener("click", async event => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
+
+    if (!target.closest("#notifWrapper")) {
+      document.getElementById("notifDropdown")?.classList.add("hidden");
+    }
+
+    const notifItem = target.closest("[data-notif-view]");
+    if (notifItem) {
+      const notifId = notifItem.dataset.notifId;
+      const targetView = notifItem.dataset.notifView;
+      const refId = notifItem.dataset.notifRef ? Number(notifItem.dataset.notifRef) : null;
+      document.getElementById("notifDropdown")?.classList.add("hidden");
+      if (notifId) {
+        api(`/api/notifications/${notifId}/read`, { method: "POST" }).catch(() => {});
+      }
+      if (targetView === "messages" && refId) {
+        activeConversationId = refId;
+      }
+      if (targetView) {
+        await switchView(targetView);
+      }
+      await pollNotifications(true);
+      return;
+    }
 
     if (target.closest("[data-close-action]")) {
       actionDialog.close();

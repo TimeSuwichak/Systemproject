@@ -5,3 +5,5 @@ obj/
 *.db-wal
 .dataprotection-keys/
 .vs/
+
+.fake

@@ -9,6 +9,7 @@ public static class DbSeeder
     public static async Task SeedAsync(AppDbContext db)
     {
         await db.Database.EnsureCreatedAsync();
+        await EnsureSchemaUpgradesAsync(db);
 
         if (await db.Users.AnyAsync())
             return;
@@ -444,6 +445,111 @@ public static class DbSeeder
             CreatedAt = now.AddHours(-2)
         });
 
+        // Initial notifications for demo users
+        db.Notifications.AddRange(
+            new Notification
+            {
+                UserId = buyer1.Id,
+                Type = "payment",
+                Title = "ยินดีด้วย! คุณชนะการประมูลถ้วยชาลายครามวินเทจ",
+                Body = "ได้รับส่วนลดซื้อหมวดเดียวกัน 10% เหลือ ฿1,620 คลิกเพื่อชำระเงิน",
+                TargetView = "payments",
+                ReferenceId = order2.Id,
+                IsRead = false,
+                CreatedAt = now.AddHours(-4)
+            },
+            new Notification
+            {
+                UserId = buyer1.Id,
+                Type = "message",
+                Title = "ข้อความใหม่จาก บ้านชาและครามรัตนา",
+                Body = "ยินดีด้วยนะคะ คุณพิมพ์ชนกชนะถ้วยชาลายครามวินเทจค่ะ ชำระเงินแล้วทักนัดรับได้เลยนะคะ",
+                TargetView = "messages",
+                ReferenceId = convTea.Id,
+                IsRead = false,
+                CreatedAt = now.AddMinutes(-30)
+            },
+            new Notification
+            {
+                UserId = seller1.Id,
+                Type = "message",
+                Title = "ข้อความใหม่จาก คุณพิมพ์ชนก (ผู้ประมูล)",
+                Body = "ขอบคุณค่ะ ถ้ารอบนี้ชนะสะดวกนัดรับวันเสาร์แถวจตุจักรไหมคะ?",
+                TargetView = "messages",
+                ReferenceId = convKnife.Id,
+                IsRead = false,
+                CreatedAt = now.AddHours(-1)
+            },
+            new Notification
+            {
+                UserId = admin.Id,
+                Type = "dispute",
+                Title = "มีข้อพิพาทใหม่รอตรวจสอบ",
+                Body = "คุณปกรณ์ นักสะสม แจ้งเรื่อง: สินค้าไม่ตรงตามรายละเอียด (นาฬิกาตั้งโต๊ะไขลานยุค 1965)",
+                TargetView = "admin-disputes",
+                IsRead = false,
+                CreatedAt = now.AddHours(-2)
+            }
+        );
+
         await db.SaveChangesAsync();
+    }
+
+    private static async Task EnsureSchemaUpgradesAsync(AppDbContext db)
+    {
+        var conn = db.Database.GetDbConnection();
+        var shouldClose = conn.State != System.Data.ConnectionState.Open;
+        if (shouldClose) await conn.OpenAsync();
+        try
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = """
+                    CREATE TABLE IF NOT EXISTS "Notifications" (
+                        "Id" INTEGER NOT NULL CONSTRAINT "PK_Notifications" PRIMARY KEY AUTOINCREMENT,
+                        "UserId" INTEGER NOT NULL,
+                        "Type" TEXT NOT NULL,
+                        "Title" TEXT NOT NULL,
+                        "Body" TEXT NOT NULL,
+                        "TargetView" TEXT NULL,
+                        "ReferenceId" INTEGER NULL,
+                        "IsRead" INTEGER NOT NULL,
+                        "CreatedAt" TEXT NOT NULL,
+                        CONSTRAINT "FK_Notifications_Users_UserId" FOREIGN KEY ("UserId") REFERENCES "Users" ("Id") ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS "IX_Notifications_UserId_IsRead_CreatedAt" ON "Notifications" ("UserId", "IsRead", "CreatedAt");
+                    """;
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            var existingCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var pragma = conn.CreateCommand())
+            {
+                pragma.CommandText = "PRAGMA table_info(\"Conversations\");";
+                using var reader = await pragma.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    existingCols.Add(reader.GetString(1));
+                }
+            }
+
+            if (!existingCols.Contains("BuyerLastReadAt"))
+            {
+                using var alter = conn.CreateCommand();
+                alter.CommandText = "ALTER TABLE \"Conversations\" ADD COLUMN \"BuyerLastReadAt\" TEXT NULL;";
+                await alter.ExecuteNonQueryAsync();
+            }
+
+            if (!existingCols.Contains("SellerLastReadAt"))
+            {
+                using var alter = conn.CreateCommand();
+                alter.CommandText = "ALTER TABLE \"Conversations\" ADD COLUMN \"SellerLastReadAt\" TEXT NULL;";
+                await alter.ExecuteNonQueryAsync();
+            }
+        }
+        finally
+        {
+            if (shouldClose) await conn.CloseAsync();
+        }
     }
 }

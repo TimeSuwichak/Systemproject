@@ -39,6 +39,8 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
         {
             var lastMsg = c.Messages.OrderByDescending(m => m.SentAt).FirstOrDefault();
             var isBuyer = c.BuyerId == user.Id;
+            var lastRead = isBuyer ? c.BuyerLastReadAt : c.SellerLastReadAt;
+            var unreadCount = c.Messages.Count(m => m.SenderId != user.Id && (!lastRead.HasValue || m.SentAt > lastRead.Value));
             var peer = isBuyer ? c.Seller : c.Buyer;
             var linkedOrder = orders.FirstOrDefault(o => o.AuctionItemId == c.AuctionItemId && o.BuyerId == c.BuyerId && o.SellerId == c.SellerId);
             return new
@@ -51,6 +53,7 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
                 peerRole = isBuyer ? "ผู้ขาย" : "ผู้ประมูล",
                 lastMessage = lastMsg?.Body ?? "เริ่มต้นการสนทนา",
                 lastSentAt = lastMsg?.SentAt ?? c.UpdatedAt,
+                unreadCount,
                 orderPaymentId = linkedOrder?.Id,
                 orderCode = linkedOrder?.OrderCode,
                 hasOpenDispute = c.Disputes.Any(d => d.Status != DisputeStatuses.Resolved),
@@ -75,13 +78,15 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
         if (existing is not null)
             return Ok(new { conversationId = existing.Id });
 
+        var now = DateTime.UtcNow;
         var conv = new Conversation
         {
             AuctionItemId = item.Id,
             BuyerId = user.Id,
             SellerId = item.SellerId,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            BuyerLastReadAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
         };
         Db.Conversations.Add(conv);
         await Db.SaveChangesAsync();
@@ -108,6 +113,18 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
             return Forbid();
 
         var isBuyer = conv.BuyerId == user.Id;
+        var now = DateTime.UtcNow;
+        if (isBuyer) conv.BuyerLastReadAt = now;
+        else conv.SellerLastReadAt = now;
+
+        // Mark related unread message notifications as read
+        var unreadNotifs = await Db.Notifications
+            .Where(n => n.UserId == user.Id && n.Type == "message" && n.ReferenceId == conv.Id && !n.IsRead)
+            .ToListAsync();
+        foreach (var n in unreadNotifs) n.IsRead = true;
+
+        await Db.SaveChangesAsync();
+
         var peer = isBuyer ? conv.Seller : conv.Buyer;
 
         return Ok(new
@@ -146,20 +163,44 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
         if (string.IsNullOrWhiteSpace(body))
             return BadRequest(new { message = "กรุณาพิมพ์ข้อความ" });
 
-        var conv = await Db.Conversations.FirstOrDefaultAsync(c => c.Id == id);
+        var conv = await Db.Conversations
+            .Include(c => c.AuctionItem)
+            .FirstOrDefaultAsync(c => c.Id == id);
         if (conv is null) return NotFound(new { message = "ไม่พบบทสนทนา" });
         if (conv.BuyerId != user.Id && conv.SellerId != user.Id)
             return Forbid();
 
+        var now = DateTime.UtcNow;
         var msg = new ChatMessage
         {
             ConversationId = conv.Id,
             SenderId = user.Id,
             Body = body,
-            SentAt = DateTime.UtcNow
+            SentAt = now
         };
-        conv.UpdatedAt = DateTime.UtcNow;
+        conv.UpdatedAt = now;
+
+        var isBuyer = conv.BuyerId == user.Id;
+        if (isBuyer) conv.BuyerLastReadAt = now;
+        else conv.SellerLastReadAt = now;
+
+        var recipientId = isBuyer ? conv.SellerId : conv.BuyerId;
+        var senderLabel = !isBuyer && !string.IsNullOrWhiteSpace(user.ShopName) ? user.ShopName : user.DisplayName;
+        var preview = body.Length > 120 ? body[..120] + "…" : body;
+
         Db.ChatMessages.Add(msg);
+        Db.Notifications.Add(new Notification
+        {
+            UserId = recipientId,
+            Type = "message",
+            Title = $"ข้อความใหม่จาก {senderLabel}",
+            Body = $"{(conv.AuctionItem is not null ? $"[{conv.AuctionItem.Name}] " : "")}{preview}",
+            TargetView = "messages",
+            ReferenceId = conv.Id,
+            IsRead = false,
+            CreatedAt = now
+        });
+
         await Db.SaveChangesAsync();
 
         return Ok(new
@@ -179,7 +220,9 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
         var user = await GetCurrentActiveUserAsync();
         if (user is null) return Unauthorized();
 
-        var conv = await Db.Conversations.FirstOrDefaultAsync(c => c.Id == id);
+        var conv = await Db.Conversations
+            .Include(c => c.AuctionItem)
+            .FirstOrDefaultAsync(c => c.Id == id);
         if (conv is null) return NotFound(new { message = "ไม่พบบทสนทนา" });
         if (conv.BuyerId != user.Id && conv.SellerId != user.Id)
             return Forbid();
@@ -191,6 +234,7 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
             ? await Db.OrderPayments.FirstOrDefaultAsync(o => o.Id == req.OrderPaymentId.Value && o.AuctionItemId == conv.AuctionItemId)
             : await Db.OrderPayments.FirstOrDefaultAsync(o => o.AuctionItemId == conv.AuctionItemId && o.BuyerId == conv.BuyerId);
 
+        var now = DateTime.UtcNow;
         var dispute = new Dispute
         {
             ConversationId = conv.Id,
@@ -199,10 +243,30 @@ public class ChatController(AppDbContext db) : ApiBaseController(db)
             Reason = req.Reason.Trim(),
             Details = req.Details.Trim(),
             Status = DisputeStatuses.Open,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = now
         };
 
         Db.Disputes.Add(dispute);
+
+        // Notify all Admins
+        var adminIds = await Db.Users
+            .Where(u => u.Role == Roles.Admin && !u.IsSuspended)
+            .Select(u => u.Id)
+            .ToListAsync();
+        foreach (var adminId in adminIds)
+        {
+            Db.Notifications.Add(new Notification
+            {
+                UserId = adminId,
+                Type = "dispute",
+                Title = "มีข้อพิพาทใหม่รอตรวจสอบ",
+                Body = $"{user.DisplayName} แจ้งเรื่อง: {dispute.Reason} ({conv.AuctionItem?.Name ?? ""})",
+                TargetView = "admin-disputes",
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+
         await Db.SaveChangesAsync();
         return Ok(new { message = "ส่งเรื่องร้องเรียนข้อพิพาทให้แอดมินแล้ว แอดมินสามารถตรวจสอบบทสนทนาของเคสนี้ได้", disputeId = dispute.Id });
     }

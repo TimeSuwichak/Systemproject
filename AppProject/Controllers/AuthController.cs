@@ -29,6 +29,15 @@ public class AuthController(AppDbContext db, AuctionLifecycleService lifecycle) 
     {
         var settings = await lifecycle.GetSettingsAsync();
         var user = await GetCurrentActiveUserAsync();
+        if (user is not null)
+        {
+            var cookieRole = User.FindFirstValue(ClaimTypes.Role);
+            if (!string.Equals(cookieRole, user.Role, StringComparison.Ordinal))
+            {
+                // Auto-refresh auth cookie if role was upgraded in DB (e.g. Buyer approved to Seller)
+                await SignInAsync(user);
+            }
+        }
         return Ok(new
         {
             authenticated = user is not null,
