@@ -8,7 +8,7 @@
             "name": "Launch Chrome",
             "request": "launch",
             "type": "chrome",
-            "url": "http://localhost:8080",
+            "url": "http://localhost:5075",
             "webRoot": "${workspaceFolder}"
         },
 
@@ -29,13 +29,13 @@
             "name": "C#: AppProject [Default Configuration]",
             "type": "dotnet",
             "request": "launch",
-            "projectPath": "C:\\Users\\Suwichak\\400\\Systemproject\\AppProject\\AppProject.csproj"
+            "projectPath": "${workspaceFolder}/AppProject/AppProject.csproj"
         },
         {
             "name": "C#: AppProject [http]",
             "type": "dotnet",
             "request": "launch",
-            "projectPath": "C:\\Users\\Suwichak\\400\\Systemproject\\AppProject\\AppProject.csproj",
+            "projectPath": "${workspaceFolder}/AppProject/AppProject.csproj",
             "launchProfileName": "http",
             "launchConfigurationId": "http"
         },
@@ -43,7 +43,7 @@
             "name": "C#: AppProject [https]",
             "type": "dotnet",
             "request": "launch",
-            "projectPath": "C:\\Users\\Suwichak\\400\\Systemproject\\AppProject\\AppProject.csproj",
+            "projectPath": "${workspaceFolder}/AppProject/AppProject.csproj",
             "launchProfileName": "https",
             "launchConfigurationId": "https"
         },
