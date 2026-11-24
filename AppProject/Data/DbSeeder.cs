@@ -546,6 +546,32 @@ public static class DbSeeder
                 alter.CommandText = "ALTER TABLE \"Conversations\" ADD COLUMN \"SellerLastReadAt\" TEXT NULL;";
                 await alter.ExecuteNonQueryAsync();
             }
+
+            async Task EnsureColumnAsync(string table, string column, string sqlType)
+            {
+                var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                using (var p = conn.CreateCommand())
+                {
+                    p.CommandText = $"PRAGMA table_info(\"{table}\");";
+                    using var r = await p.ExecuteReaderAsync();
+                    while (await r.ReadAsync()) cols.Add(r.GetString(1));
+                }
+                if (cols.Count > 0 && !cols.Contains(column))
+                {
+                    using var a = conn.CreateCommand();
+                    a.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {sqlType};";
+                    await a.ExecuteNonQueryAsync();
+                }
+            }
+
+            await EnsureColumnAsync("OrderPayments", "PaymentMethod", "TEXT NOT NULL DEFAULT 'PlatformEscrow'");
+            await EnsureColumnAsync("OrderPayments", "PaymentSlipUrl", "TEXT NULL");
+            await EnsureColumnAsync("OrderPayments", "PaymentNote", "TEXT NULL");
+            await EnsureColumnAsync("OrderPayments", "PaymentSubmittedAt", "TEXT NULL");
+            await EnsureColumnAsync("OrderPayments", "PaymentRejectReason", "TEXT NULL");
+
+            await EnsureColumnAsync("FinanceSettings", "PlatformPromptPayId", "TEXT NOT NULL DEFAULT '081-999-8888'");
+            await EnsureColumnAsync("FinanceSettings", "PlatformAccountName", "TEXT NOT NULL DEFAULT 'บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)'");
         }
         finally
         {

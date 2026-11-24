@@ -13,7 +13,13 @@ namespace AppProject.Controllers;
 public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycle) : ApiBaseController(db)
 {
     public record FinanceActionRequest(string? Note);
-    public record UpdateSettingsRequest(decimal SameCategoryDiscountPercent, decimal PlatformFeePercent, decimal GlobalMinBidIncrement);
+    public record VerifyEscrowPaymentRequest(bool Approve, string? Reason);
+    public record UpdateSettingsRequest(
+        decimal SameCategoryDiscountPercent,
+        decimal PlatformFeePercent,
+        decimal GlobalMinBidIncrement,
+        string? PlatformPromptPayId,
+        string? PlatformAccountName);
 
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
@@ -36,6 +42,7 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
             .ToDictionaryAsync(x => x.OrderId);
 
         var paidOrders = orders.Where(o => o.PaymentStatus == PaymentStatuses.Paid).ToList();
+        var escrowPaidOrders = paidOrders.Where(o => o.PaymentMethod == PaymentMethods.PlatformEscrow).ToList();
 
         return Ok(new
         {
@@ -44,6 +51,8 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                 settings.SameCategoryDiscountPercent,
                 settings.PlatformFeePercent,
                 settings.GlobalMinBidIncrement,
+                settings.PlatformPromptPayId,
+                settings.PlatformAccountName,
                 settings.UpdatedAt
             },
             summary = new
@@ -51,17 +60,19 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                 totalOrders = orders.Count,
                 paidOrdersCount = paidOrders.Count,
                 unpaidOrdersCount = orders.Count(o => o.PaymentStatus == PaymentStatuses.Unpaid),
+                pendingVerifyCount = orders.Count(o => o.PaymentStatus == PaymentStatuses.PendingVerification && o.PaymentMethod == PaymentMethods.PlatformEscrow),
                 grossSales = paidOrders.Sum(o => o.WinningPrice),
                 totalDiscounts = paidOrders.Sum(o => o.DiscountAmount),
                 totalBuyerPaid = paidOrders.Sum(o => o.FinalBuyerAmount),
-                totalPlatformFee = paidOrders.Sum(o => o.PlatformFeeAmount),
+                totalPlatformFee = escrowPaidOrders.Sum(o => o.PlatformFeeAmount),
                 totalReleased = orders.Where(o => o.PayoutStatus == PayoutStatuses.Released).Sum(o => o.SellerNetAmount),
-                pendingRelease = paidOrders.Where(o => o.PayoutStatus == PayoutStatuses.Pending).Sum(o => o.SellerNetAmount),
+                pendingRelease = escrowPaidOrders.Where(o => o.PayoutStatus == PayoutStatuses.Pending).Sum(o => o.SellerNetAmount),
                 totalRefunded = orders.Where(o => o.PaymentStatus == PaymentStatuses.Refunded).Sum(o => o.FinalBuyerAmount)
             },
             orders = orders.Select(o =>
             {
                 disputesByOrder.TryGetValue(o.Id, out var disp);
+                var isEscrow = o.PaymentMethod == PaymentMethods.PlatformEscrow;
                 return new
                 {
                     o.Id,
@@ -82,7 +93,11 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                     o.PlatformFeePercent,
                     o.PlatformFeeAmount,
                     o.SellerNetAmount,
+                    o.PaymentMethod,
                     o.PaymentStatus,
+                    o.PaymentSlipUrl,
+                    o.PaymentNote,
+                    o.PaymentSubmittedAt,
                     o.PaidAt,
                     o.MeetupStatus,
                     o.MeetupLocation,
@@ -95,34 +110,123 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                     o.FinanceNote,
                     hasOpenDispute = disp?.HasOpen ?? false,
                     disputeStatus = disp?.LatestStatus,
-                    canRelease = o.PaymentStatus == PaymentStatuses.Paid
+                    canVerifyEscrowPayment = isEscrow && o.PaymentStatus == PaymentStatuses.PendingVerification,
+                    canRelease = isEscrow
+                        && o.PaymentStatus == PaymentStatuses.Paid
                         && o.PayoutStatus == PayoutStatuses.Pending
                         && (o.MeetupStatus == MeetupStatuses.Completed || o.MeetupStatus == MeetupStatuses.Delivered),
-                    canRefund = o.PaymentStatus == PaymentStatuses.Paid && o.PayoutStatus == PayoutStatuses.Pending,
+                    canRefund = isEscrow
+                        && o.PaymentStatus == PaymentStatuses.Paid
+                        && o.PayoutStatus == PayoutStatuses.Pending,
                     o.CreatedAt
                 };
             })
         });
     }
 
+    [HttpPost("orders/{orderId:int}/verify-payment")]
+    public async Task<IActionResult> VerifyEscrowPayment(int orderId, [FromBody] VerifyEscrowPaymentRequest req)
+    {
+        var order = await Db.OrderPayments
+            .Include(o => o.AuctionItem)
+            .FirstOrDefaultAsync(o => o.Id == orderId);
+        if (order is null) return NotFound(new { message = "ไม่พบรายการชำระเงิน" });
+
+        if (order.PaymentMethod != PaymentMethods.PlatformEscrow)
+            return BadRequest(new { message = "รายการนี้เป็นการชำระตรงกับผู้ขาย ต้องให้ผู้ขายเป็นผู้ยืนยัน" });
+        if (order.PaymentStatus != PaymentStatuses.PendingVerification)
+            return BadRequest(new { message = "รายการนี้ไม่ได้อยู่ในสถานะรอตรวจสลิป" });
+
+        var now = DateTime.UtcNow;
+        if (req.Approve)
+        {
+            order.PaymentStatus = PaymentStatuses.Paid;
+            order.PaidAt = now;
+            order.PaymentRejectReason = null;
+
+            Db.Notifications.Add(new Notification
+            {
+                UserId = order.BuyerId,
+                Type = "payment_verified",
+                Title = $"ฝ่ายการเงินยืนยันสลิปแล้ว ({order.OrderCode})",
+                Body = $"รับชำระยอด ฿{order.FinalBuyerAmount:N0} สำหรับ “{order.AuctionItem?.Name}” เรียบร้อย รอผู้ขายกำหนดนัดรับได้เลย",
+                TargetView = "payments",
+                ReferenceId = order.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
+            Db.Notifications.Add(new Notification
+            {
+                UserId = order.SellerId,
+                Type = "payment_verified",
+                Title = $"ผู้ซื้อชำระเงินเข้าระบบกลางแล้ว ({order.OrderCode})",
+                Body = $"ฝ่ายการเงินยืนยันยอดสำหรับ “{order.AuctionItem?.Name}” แล้ว สามารถกำหนดนัดรับสินค้าได้เลย",
+                TargetView = "seller-orders",
+                ReferenceId = order.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(req.Reason))
+                return BadRequest(new { message = "กรุณาระบุเหตุผลในการปฏิเสธสลิป" });
+
+            order.PaymentStatus = PaymentStatuses.Unpaid;
+            order.PaymentRejectReason = req.Reason.Trim();
+
+            Db.Notifications.Add(new Notification
+            {
+                UserId = order.BuyerId,
+                Type = "payment_rejected",
+                Title = $"สลิปไม่ผ่านการตรวจสอบ ({order.OrderCode})",
+                Body = $"เหตุผล: {order.PaymentRejectReason} — กรุณาอัปโหลดสลิปใหม่อีกครั้ง",
+                TargetView = "payments",
+                ReferenceId = order.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        return Ok(new { message = req.Approve ? $"ยืนยันรับชำระเงิน {order.OrderCode} แล้ว" : $"ปฏิเสธสลิป {order.OrderCode} พร้อมส่งเหตุผลให้ผู้ซื้อแล้ว" });
+    }
+
     [HttpPost("orders/{orderId:int}/release")]
     public async Task<IActionResult> ReleasePayout(int orderId, [FromBody] FinanceActionRequest? req)
     {
-        var order = await Db.OrderPayments.FirstOrDefaultAsync(o => o.Id == orderId);
+        var order = await Db.OrderPayments
+            .Include(o => o.AuctionItem)
+            .FirstOrDefaultAsync(o => o.Id == orderId);
         if (order is null) return NotFound(new { message = "ไม่พบรายการชำระเงิน" });
 
+        if (order.PaymentMethod != PaymentMethods.PlatformEscrow)
+            return BadRequest(new { message = "รายการนี้ผู้ขายรับเงินตรงจากผู้ซื้อแล้ว ไม่ต้องปล่อยเงินผ่านระบบกลาง" });
         if (order.PaymentStatus != PaymentStatuses.Paid)
-            return BadRequest(new { message = "ไม่สามารถปล่อยเงินได้ เนื่องจากรายการนี้ยังไม่ชำระเงินหรือถูกคืนเงินแล้ว" });
+            return BadRequest(new { message = "ไม่สามารถปล่อยเงินได้ เนื่องจากรายการนี้ยังไม่ยืนยันการชำระเงินหรือถูกคืนเงินแล้ว" });
         if (order.PayoutStatus != PayoutStatuses.Pending)
             return BadRequest(new { message = "รายการนี้ดำเนินการด้านการเงินไปแล้ว" });
         if (order.MeetupStatus != MeetupStatuses.Completed && order.MeetupStatus != MeetupStatuses.Delivered)
             return BadRequest(new { message = "ต้องรอให้มีการยืนยันส่งมอบ/รับของก่อนจึงจะปล่อยเงินให้ผู้ขายได้" });
 
+        var now = DateTime.UtcNow;
         order.PayoutStatus = PayoutStatuses.Released;
-        order.PayoutReleasedAt = DateTime.UtcNow;
+        order.PayoutReleasedAt = now;
         order.FinanceNote = string.IsNullOrWhiteSpace(req?.Note)
             ? "โอนเงินสุทธิให้ผู้ขายเรียบร้อยแล้ว"
             : req!.Note!.Trim();
+
+        Db.Notifications.Add(new Notification
+        {
+            UserId = order.SellerId,
+            Type = "payout_released",
+            Title = $"ฝ่ายการเงินปล่อยเงินให้คุณแล้ว ({order.OrderCode})",
+            Body = $"โอนยอดสุทธิ ฿{order.SellerNetAmount:N2} สำหรับ “{order.AuctionItem?.Name}” เรียบร้อย",
+            TargetView = "seller-orders",
+            ReferenceId = order.Id,
+            IsRead = false,
+            CreatedAt = now
+        });
 
         await Db.SaveChangesAsync();
         return Ok(new { message = $"ปล่อยเงิน ฿{order.SellerNetAmount:N2} ให้ผู้ขาย ({order.OrderCode}) เรียบร้อยแล้ว" });
@@ -131,20 +235,37 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
     [HttpPost("orders/{orderId:int}/refund")]
     public async Task<IActionResult> RefundOrder(int orderId, [FromBody] FinanceActionRequest? req)
     {
-        var order = await Db.OrderPayments.FirstOrDefaultAsync(o => o.Id == orderId);
+        var order = await Db.OrderPayments
+            .Include(o => o.AuctionItem)
+            .FirstOrDefaultAsync(o => o.Id == orderId);
         if (order is null) return NotFound(new { message = "ไม่พบรายการชำระเงิน" });
 
+        if (order.PaymentMethod != PaymentMethods.PlatformEscrow)
+            return BadRequest(new { message = "รายการนี้ชำระตรงกับผู้ขาย ไม่มีเงินพักอยู่ในระบบกลาง" });
         if (order.PaymentStatus != PaymentStatuses.Paid)
             return BadRequest(new { message = "รายการนี้ยังไม่ได้ชำระเงินหรือคืนเงินไปแล้ว" });
         if (order.PayoutStatus == PayoutStatuses.Released)
             return BadRequest(new { message = "ไม่สามารถคืนเงินได้ เนื่องจากปล่อยเงินให้ผู้ขายไปแล้ว" });
 
+        var now = DateTime.UtcNow;
         order.PaymentStatus = PaymentStatuses.Refunded;
         order.PayoutStatus = PayoutStatuses.Refunded;
-        order.RefundedAt = DateTime.UtcNow;
+        order.RefundedAt = now;
         order.FinanceNote = string.IsNullOrWhiteSpace(req?.Note)
             ? "คืนเงินเต็มจำนวนให้ผู้ประมูลเรียบร้อยแล้ว"
             : req!.Note!.Trim();
+
+        Db.Notifications.Add(new Notification
+        {
+            UserId = order.BuyerId,
+            Type = "refunded",
+            Title = $"ฝ่ายการเงินคืนเงินให้คุณแล้ว ({order.OrderCode})",
+            Body = $"คืนเงินยอด ฿{order.FinalBuyerAmount:N2} สำหรับ “{order.AuctionItem?.Name}” — {order.FinanceNote}",
+            TargetView = "payments",
+            ReferenceId = order.Id,
+            IsRead = false,
+            CreatedAt = now
+        });
 
         await Db.SaveChangesAsync();
         return Ok(new { message = $"คืนเงิน ฿{order.FinalBuyerAmount:N2} ให้ผู้ซื้อ ({order.OrderCode}) เรียบร้อยแล้ว" });
@@ -164,12 +285,16 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
         settings.SameCategoryDiscountPercent = req.SameCategoryDiscountPercent;
         settings.PlatformFeePercent = req.PlatformFeePercent;
         settings.GlobalMinBidIncrement = req.GlobalMinBidIncrement;
+        if (!string.IsNullOrWhiteSpace(req.PlatformPromptPayId))
+            settings.PlatformPromptPayId = req.PlatformPromptPayId.Trim();
+        if (!string.IsNullOrWhiteSpace(req.PlatformAccountName))
+            settings.PlatformAccountName = req.PlatformAccountName.Trim();
         settings.UpdatedAt = DateTime.UtcNow;
 
         await Db.SaveChangesAsync();
         await lifecycle.RecalculateUnpaidOrdersAsync();
 
-        return Ok(new { message = "บันทึกกติกาการเงินและอัปเดตรายการรอชำระเรียบร้อยแล้ว", settings });
+        return Ok(new { message = "บันทึกกติกาการเงินและข้อมูล QR กลางเรียบร้อยแล้ว", settings });
     }
 
     [HttpGet("report/csv")]
@@ -185,16 +310,18 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
         static string Csv(string? v) => $"\"{(v ?? "").Replace("\"", "\"\"")}\"";
 
         var sb = new StringBuilder();
-        sb.AppendLine("รหัสรายการ,สินค้า,หมวดหมู่,ผู้ชนะประมูล,ผู้ขาย,ราคาปิดประมูล,ส่วนลด(%),ส่วนลด(บาท),ยอดชำระสุทธิ,ค่าธรรมเนียม(%),ค่าธรรมเนียม(บาท),ยอดโอนผู้ขายสุทธิ,สถานะชำระเงิน,สถานะนัดรับ,สถานะปล่อยเงิน,วันที่สร้าง,หมายเหตุการเงิน");
+        sb.AppendLine("รหัสรายการ,สินค้า,หมวดหมู่,ผู้ชนะประมูล,ผู้ขาย,วิธีชำระเงิน,ราคาปิดประมูล,ส่วนลด(%),ส่วนลด(บาท),ยอดชำระสุทธิ,ค่าธรรมเนียม(%),ค่าธรรมเนียม(บาท),ยอดโอนผู้ขายสุทธิ,สถานะชำระเงิน,สถานะนัดรับ,สถานะปล่อยเงิน,วันที่สร้าง,หมายเหตุการเงิน");
 
         foreach (var o in orders)
         {
+            var methodLabel = o.PaymentMethod == PaymentMethods.DirectToSeller ? "จ่ายตรงผู้ขาย" : "QR ระบบกลาง (Escrow)";
             sb.AppendLine(string.Join(",",
                 Csv(o.OrderCode),
                 Csv(o.AuctionItem?.Name),
                 Csv(o.AuctionItem?.Category?.Name),
                 Csv(o.Buyer?.DisplayName),
                 Csv(o.Seller?.ShopName ?? o.Seller?.DisplayName),
+                Csv(methodLabel),
                 o.WinningPrice.ToString("0.00"),
                 o.DiscountPercent.ToString("0.##"),
                 o.DiscountAmount.ToString("0.00"),
@@ -209,7 +336,6 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                 Csv(o.FinanceNote)));
         }
 
-        // UTF-8 with BOM for Excel Thai compatibility
         var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
         return File(bytes, "text/csv; charset=utf-8", $"sales-report-{DateTime.Now:yyyyMMdd-HHmm}.csv");
     }

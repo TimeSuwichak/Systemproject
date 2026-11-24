@@ -124,5 +124,7 @@ C:\Users\Suwichak\400\Systemproject\AppProject\bin\Debug\net10.0\runtimes\win-x6
 C:\Users\Suwichak\400\Systemproject\AppProject\bin\Debug\net10.0\runtimes\win-x86\native\e_sqlite3.dll
 C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\AppProject.csproj.AssemblyReference.cache
 C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\AppProject.csproj.Up2Date
-C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\compressed\0iotxxvvqa-{0}-bzs89823u9-bzs89823u9.gz
-C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\compressed\cbscasy7q9-{0}-tzlhevjlc8-tzlhevjlc8.gz
+C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\compressed\0iotxxvvqa-{0}-8o9qm3tsmz-8o9qm3tsmz.gz
+C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\compressed\cbscasy7q9-{0}-zf4oejt6hk-zf4oejt6hk.gz
+C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\compressed\0iotxxvvqa-{0}-0692ylftrj-0692ylftrj.gz
+C:\Users\Suwichak\400\Systemproject\AppProject\obj\Debug\net10.0\compressed\cbscasy7q9-{0}-1q3ozij60o-1q3ozij60o.gz

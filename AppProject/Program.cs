@@ -62,7 +62,11 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+var uploadsDir = Path.Combine(app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot"), "uploads", "slips");
+Directory.CreateDirectory(uploadsDir);
+
 app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.UseRouting();
 
 app.UseAuthentication();

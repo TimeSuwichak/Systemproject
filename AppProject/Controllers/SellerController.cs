@@ -25,6 +25,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         DateTime EndAt);
 
     public record ScheduleMeetupRequest(string Location, DateTime MeetupAt, string? Note);
+    public record VerifyDirectPaymentRequest(bool Approve, string? Reason);
 
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
@@ -55,9 +56,9 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
             .ToDictionaryAsync(c => (c.AuctionItemId, c.BuyerId), c => c.Id);
 
         var totalGross = orders.Where(o => o.PaymentStatus == PaymentStatuses.Paid).Sum(o => o.FinalBuyerAmount);
-        var totalFees = orders.Where(o => o.PaymentStatus == PaymentStatuses.Paid).Sum(o => o.PlatformFeeAmount);
-        var totalReleased = orders.Where(o => o.PayoutStatus == PayoutStatuses.Released).Sum(o => o.SellerNetAmount);
-        var pendingPayout = orders.Where(o => o.PaymentStatus == PaymentStatuses.Paid && o.PayoutStatus == PayoutStatuses.Pending).Sum(o => o.SellerNetAmount);
+        var totalFees = orders.Where(o => o.PaymentStatus == PaymentStatuses.Paid && o.PaymentMethod == PaymentMethods.PlatformEscrow).Sum(o => o.PlatformFeeAmount);
+        var totalReleased = orders.Where(o => o.PayoutStatus == PayoutStatuses.Released || o.PayoutStatus == PayoutStatuses.DirectSettled).Sum(o => o.SellerNetAmount);
+        var pendingPayout = orders.Where(o => o.PaymentStatus == PaymentStatuses.Paid && o.PayoutStatus == PayoutStatuses.Pending && o.PaymentMethod == PaymentMethods.PlatformEscrow).Sum(o => o.SellerNetAmount);
 
         return Ok(new
         {
@@ -120,7 +121,11 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
                 o.PlatformFeePercent,
                 o.PlatformFeeAmount,
                 o.SellerNetAmount,
+                o.PaymentMethod,
                 o.PaymentStatus,
+                o.PaymentSlipUrl,
+                o.PaymentNote,
+                o.PaymentSubmittedAt,
                 o.PaidAt,
                 o.MeetupStatus,
                 o.MeetupLocation,
@@ -131,6 +136,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
                 o.PayoutStatus,
                 o.PayoutReleasedAt,
                 o.FinanceNote,
+                canVerifyDirectPayment = o.PaymentMethod == PaymentMethods.DirectToSeller && o.PaymentStatus == PaymentStatuses.PendingVerification,
                 conversationId = convMap.GetValueOrDefault((o.AuctionItemId, o.BuyerId), 0),
                 o.CreatedAt
             })
@@ -273,5 +279,71 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         await Db.SaveChangesAsync();
 
         return Ok(new { message = "ยืนยันส่งมอบสินค้าแล้ว รอผู้ซื้อยืนยันรับของและฝ่ายการเงินปล่อยเงิน" });
+    }
+
+    [HttpPost("orders/{orderId:int}/verify-payment")]
+    public async Task<IActionResult> VerifyDirectPayment(int orderId, [FromBody] VerifyDirectPaymentRequest req)
+    {
+        var user = await GetCurrentActiveUserAsync();
+        if (user is null) return Unauthorized();
+
+        var order = await Db.OrderPayments
+            .Include(o => o.AuctionItem)
+            .FirstOrDefaultAsync(o => o.Id == orderId && o.SellerId == user.Id);
+        if (order is null) return NotFound(new { message = "ไม่พบรายการคำสั่งซื้อ" });
+
+        if (order.PaymentMethod != PaymentMethods.DirectToSeller)
+            return BadRequest(new { message = "รายการนี้ชำระผ่าน QR ระบบกลาง ต้องให้ฝ่ายการเงินเป็นผู้ตรวจสอบ" });
+        if (order.PaymentStatus != PaymentStatuses.PendingVerification)
+            return BadRequest(new { message = "รายการนี้ไม่ได้อยู่ในสถานะรอผู้ขายยืนยันการชำระเงิน" });
+
+        var now = DateTime.UtcNow;
+        if (req.Approve)
+        {
+            order.PaymentStatus = PaymentStatuses.Paid;
+            order.PaidAt = now;
+            order.PayoutStatus = PayoutStatuses.DirectSettled;
+            order.PayoutReleasedAt = now;
+            order.PlatformFeePercent = 0;
+            order.PlatformFeeAmount = 0;
+            order.SellerNetAmount = order.FinalBuyerAmount;
+            order.PaymentRejectReason = null;
+            order.FinanceNote = "ผู้ขายยืนยันได้รับเงินชำระตรงจากผู้ซื้อแล้ว";
+
+            Db.Notifications.Add(new Notification
+            {
+                UserId = order.BuyerId,
+                Type = "payment_verified",
+                Title = $"ผู้ขายยืนยันรับเงินแล้ว ({order.OrderCode})",
+                Body = $"สินค้า “{order.AuctionItem?.Name}” ยืนยันชำระเงินตรงเรียบร้อย รอผู้ขายกำหนดนัดรับได้เลย",
+                TargetView = "payments",
+                ReferenceId = order.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(req.Reason))
+                return BadRequest(new { message = "กรุณาระบุเหตุผลในการปฏิเสธการชำระเงิน" });
+
+            order.PaymentStatus = PaymentStatuses.Unpaid;
+            order.PaymentRejectReason = req.Reason.Trim();
+
+            Db.Notifications.Add(new Notification
+            {
+                UserId = order.BuyerId,
+                Type = "payment_rejected",
+                Title = $"ผู้ขายยังยืนยันยอดชำระไม่ได้ ({order.OrderCode})",
+                Body = $"เหตุผล: {order.PaymentRejectReason} — กรุณาตรวจสอบและแจ้งชำระเงินใหม่อีกครั้ง",
+                TargetView = "payments",
+                ReferenceId = order.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+
+        await Db.SaveChangesAsync();
+        return Ok(new { message = req.Approve ? $"ยืนยันได้รับเงินตรงสำหรับ {order.OrderCode} แล้ว" : $"ปฏิเสธการแจ้งชำระเงิน {order.OrderCode} แล้ว" });
     }
 }

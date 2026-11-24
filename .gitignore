@@ -4,6 +4,7 @@ obj/
 *.db-shm
 *.db-wal
 .dataprotection-keys/
+AppProject/wwwroot/uploads/
 .vs/
 
 .fake

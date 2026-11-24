@@ -86,10 +86,26 @@ public class NotificationsController(AppDbContext db) : ApiBaseController(db)
             if (pendingAuctions > 0) roleAlerts.Add(new { view = "admin-approvals", title = $"สินค้ารออนุมัติ {pendingAuctions} รายการ", body = "คลิกเพื่อตรวจรายละเอียดสินค้า" });
             if (openDisputes > 0) roleAlerts.Add(new { view = "admin-disputes", title = $"ข้อพิพาทที่เปิดอยู่ {openDisputes} เคส", body = "คลิกเพื่อตรวจสอบแชทที่ถูกร้องเรียน" });
         }
+        else if (user.Role == Roles.Seller)
+        {
+            var pendingDirect = await Db.OrderPayments.CountAsync(o =>
+                o.SellerId == user.Id
+                && o.PaymentMethod == PaymentMethods.DirectToSeller
+                && o.PaymentStatus == PaymentStatuses.PendingVerification);
+            if (pendingDirect > 0)
+                roleAlerts.Add(new { view = "seller-orders", title = $"รายการแจ้งจ่ายตรงรอยืนยัน {pendingDirect} รายการ", body = "ผู้ซื้อแจ้งชำระเงินตรงแล้ว คลิกเพื่อตรวจสอบและกดยืนยัน" });
+        }
         else if (user.Role == Roles.Finance)
         {
+            var pendingEscrowSlips = await Db.OrderPayments.CountAsync(o =>
+                o.PaymentMethod == PaymentMethods.PlatformEscrow
+                && o.PaymentStatus == PaymentStatuses.PendingVerification);
+            if (pendingEscrowSlips > 0)
+                roleAlerts.Add(new { view = "finance-payments", title = $"มีสลิป QR ระบบกลางรอตรวจ {pendingEscrowSlips} รายการ", body = "คลิกเพื่อตรวจสลิปและยืนยันรับชำระเงิน" });
+
             var readyToRelease = await Db.OrderPayments.CountAsync(o =>
-                o.PaymentStatus == PaymentStatuses.Paid
+                o.PaymentMethod == PaymentMethods.PlatformEscrow
+                && o.PaymentStatus == PaymentStatuses.Paid
                 && o.PayoutStatus == PayoutStatuses.Pending
                 && (o.MeetupStatus == MeetupStatuses.Completed || o.MeetupStatus == MeetupStatuses.Delivered));
             if (readyToRelease > 0)

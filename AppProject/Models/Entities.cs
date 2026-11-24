@@ -26,9 +26,16 @@ public static class AuctionStatuses
     public const string Closed = "Closed";
 }
 
+public static class PaymentMethods
+{
+    public const string PlatformEscrow = "PlatformEscrow";
+    public const string DirectToSeller = "DirectToSeller";
+}
+
 public static class PaymentStatuses
 {
     public const string Unpaid = "Unpaid";
+    public const string PendingVerification = "PendingVerification";
     public const string Paid = "Paid";
     public const string Refunded = "Refunded";
 }
@@ -45,6 +52,7 @@ public static class PayoutStatuses
 {
     public const string Pending = "Pending";
     public const string Released = "Released";
+    public const string DirectSettled = "DirectSettled";
     public const string Refunded = "Refunded";
 }
 
@@ -210,8 +218,18 @@ public class OrderPayment
     public decimal PlatformFeeAmount { get; set; }
     public decimal SellerNetAmount { get; set; }
 
-    [Required, MaxLength(20)]
+    [Required, MaxLength(30)]
+    public string PaymentMethod { get; set; } = PaymentMethods.PlatformEscrow;
+
+    [Required, MaxLength(30)]
     public string PaymentStatus { get; set; } = PaymentStatuses.Unpaid;
+    [MaxLength(400)]
+    public string? PaymentSlipUrl { get; set; }
+    [MaxLength(300)]
+    public string? PaymentNote { get; set; }
+    public DateTime? PaymentSubmittedAt { get; set; }
+    [MaxLength(300)]
+    public string? PaymentRejectReason { get; set; }
     public DateTime? PaidAt { get; set; }
 
     [Required, MaxLength(20)]
@@ -331,5 +349,9 @@ public class FinanceSettings
     public decimal SameCategoryDiscountPercent { get; set; } = 10;
     public decimal PlatformFeePercent { get; set; } = 5;
     public decimal GlobalMinBidIncrement { get; set; } = 50;
+    [MaxLength(40)]
+    public string PlatformPromptPayId { get; set; } = "081-999-8888";
+    [MaxLength(120)]
+    public string PlatformAccountName { get; set; } = "บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)";
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -138,6 +138,7 @@ public class AuctionLifecycleService(AppDbContext db)
                     AuctionItemId = auction.Id,
                     BuyerId = highestBid.BidderId,
                     SellerId = auction.SellerId,
+                    SellerLastReadAt = now,
                     CreatedAt = now,
                     UpdatedAt = now,
                     Messages =
@@ -151,6 +152,18 @@ public class AuctionLifecycleService(AppDbContext db)
                     ]
                 });
             }
+
+            db.Notifications.Add(new Notification
+            {
+                UserId = highestBid.BidderId,
+                Type = "auction_won",
+                Title = $"ยินดีด้วย! คุณชนะประมูล “{auction.Name}”",
+                Body = $"ราคาปิด ฿{highestBid.Amount:N0} ยอดสุทธิ ฿{pricing.finalBuyerAmount:N0} ไปที่หน้าชำระเงินเพื่อดำเนินการต่อ",
+                TargetView = "payments",
+                ReferenceId = auction.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
         }
 
         await db.SaveChangesAsync(ct);

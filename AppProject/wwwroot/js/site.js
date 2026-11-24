@@ -36,6 +36,8 @@
   let liveProducts = [];
   let cachedCategories = [];
   let sellerListingsCache = [];
+  let buyerOrdersCache = [];
+  let buyerPaymentConfig = { platformPromptPayId: "081-999-8888", platformAccountName: "บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)" };
   let conversationsCache = [];
   let activeConversationId = null;
   let selectedProductId = null;
@@ -82,9 +84,16 @@
     return `฿${Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 })}`;
   }
 
+  function parseUtcDate(iso) {
+    if (!iso) return new Date(NaN);
+    const s = String(iso).trim();
+    const hasTz = /(?:Z|[+-]\d{2}:\d{2})$/i.test(s);
+    return new Date(hasTz ? s : `${s}Z`);
+  }
+
   function formatDateTime(iso) {
     if (!iso) return "-";
-    const d = new Date(iso);
+    const d = parseUtcDate(iso);
     if (Number.isNaN(d.getTime())) return "-";
     return new Intl.DateTimeFormat("th-TH", {
       day: "numeric", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit"
@@ -93,14 +102,14 @@
 
   function formatDateShort(iso) {
     if (!iso) return "-";
-    const d = new Date(iso);
+    const d = parseUtcDate(iso);
     if (Number.isNaN(d.getTime())) return "-";
     return new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "2-digit" }).format(d);
   }
 
   function remainingText(endAtIso) {
-    const diffSec = Math.floor((new Date(endAtIso).getTime() - Date.now()) / 1000);
-    if (diffSec <= 0) return "ปิดประมูลแล้ว";
+    const diffSec = Math.floor((parseUtcDate(endAtIso).getTime() - Date.now()) / 1000);
+    if (Number.isNaN(diffSec) || diffSec <= 0) return "ปิดประมูลแล้ว";
     const hours = Math.floor(diffSec / 3600);
     const minutes = Math.floor((diffSec % 3600) / 60);
     const secs = diffSec % 60;
@@ -153,9 +162,15 @@
     }
   }
 
-  function paymentPill(status) {
+  function paymentMethodLabel(method) {
+    return method === "DirectToSeller" ? "จ่ายตรงผู้ขาย" : "QR ระบบกลาง (Escrow)";
+  }
+
+  function paymentPill(status, method) {
     switch (status) {
-      case "Paid": return statusPill("green", "ชำระเงินแล้ว");
+      case "Paid": return statusPill("green", "ยืนยันชำระเงินแล้ว");
+      case "PendingVerification":
+        return statusPill("blue", method === "DirectToSeller" ? "รอผู้ขายยืนยันรับเงิน" : "รอฝ่ายการเงินตรวจสลิป");
       case "Refunded": return statusPill("red", "คืนเงินแล้ว");
       default: return statusPill("pending", "รอชำระเงิน");
     }
@@ -164,9 +179,170 @@
   function payoutPill(status) {
     switch (status) {
       case "Released": return statusPill("green", "ปล่อยเงินให้ผู้ขายแล้ว");
+      case "DirectSettled": return statusPill("blue", "ผู้ขายรับเงินตรงแล้ว");
       case "Refunded": return statusPill("red", "คืนเงินผู้ซื้อแล้ว");
       default: return statusPill("pending", "รอปล่อยเงิน");
     }
+  }
+
+  function buildPromptPayQrSvg(seedText) {
+    const size = 21;
+    let hash = 2166136261;
+    for (let i = 0; i < seedText.length; i++) {
+      hash ^= seedText.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    const isFinder = (r, c) =>
+      (r < 7 && c < 7) || (r < 7 && c >= size - 7) || (r >= size - 7 && c < 7);
+    const finderBit = (r, c) => {
+      const lr = r < 7 ? r : r - (size - 7);
+      const lc = c < 7 ? c : c - (size - 7);
+      if (lr === 0 || lr === 6 || lc === 0 || lc === 6) return true;
+      if (lr >= 2 && lr <= 4 && lc >= 2 && lc <= 4) return true;
+      return false;
+    };
+    let rects = "";
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        let on = false;
+        if (isFinder(r, c)) {
+          on = finderBit(r, c);
+        } else if (r === 6 || c === 6) {
+          on = (r + c) % 2 === 0;
+        } else {
+          hash = (Math.imul(hash ^ (r * 31 + c), 1103515245) + 12345) >>> 0;
+          on = ((hash >> 16) & 1) === 1;
+        }
+        if (on) rects += `<rect x="${c}" y="${r}" width="1" height="1" fill="#182a20"/>`;
+      }
+    }
+    return `<svg viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PromptPay QR"><rect width="${size}" height="${size}" fill="#fff"/>${rects}</svg>`;
+  }
+
+  function openSlipModal(slipUrl, title, note = "") {
+    document.getElementById("actionDialogContent").innerHTML = `
+      <h2 class="auth-title">${escapeHtml(title)}</h2>
+      ${note ? `<p class="auth-subtitle">หมายเหตุผู้ซื้อ: ${escapeHtml(note)}</p>` : ""}
+      <img class="slip-full-img" src="${safeImageUrl(slipUrl)}" alt="หลักฐานการโอนเงิน">
+      <div class="table-actions" style="justify-content:flex-end;">
+        <a class="button button-secondary" href="${safeImageUrl(slipUrl)}" target="_blank" rel="noopener">เปิดภาพขนาดเต็ม ↗</a>
+        <button type="button" class="button button-primary" data-close-action="1">ปิด</button>
+      </div>
+    `;
+    openDialogSafe(actionDialog);
+  }
+
+  function openCheckoutModal(order) {
+    const qrSeed = `${buyerPaymentConfig.platformPromptPayId}|${order.orderCode}|${order.finalBuyerAmount}`;
+    document.getElementById("actionDialogContent").innerHTML = `
+      <h2 class="auth-title">ชำระเงิน · ${escapeHtml(order.orderCode)}</h2>
+      <p class="auth-subtitle">${escapeHtml(order.itemName)} · ยอดสุทธิ <strong>${money(order.finalBuyerAmount)}</strong>${order.discountAmount > 0 ? ` (รับส่วนลดหมวดเดียวกัน -${money(order.discountAmount)})` : ""}</p>
+      ${order.paymentRejectReason ? `<div class="info-banner banner-error"><strong>ครั้งก่อนไม่ผ่านการตรวจสอบ</strong>เหตุผล: ${escapeHtml(order.paymentRejectReason)} — กรุณาตรวจสอบและส่งใหม่อีกครั้ง</div>` : ""}
+      <form id="checkoutPayForm" enctype="multipart/form-data">
+        <div class="pay-method-grid">
+          <label class="pay-method-card selected" data-pay-card="PlatformEscrow">
+            <input type="radio" name="paymentMethod" value="PlatformEscrow" checked>
+            <strong>QR ระบบกลาง (แบบ Shopee)</strong>
+            <small>โอนผ่าน QR เข้าระบบกลาง + แนบสลิป ฝ่ายการเงินคุ้มครองเงินจนกว่าคุณจะยืนยันรับของ</small>
+          </label>
+          <label class="pay-method-card" data-pay-card="DirectToSeller">
+            <input type="radio" name="paymentMethod" value="DirectToSeller">
+            <strong>จ่ายตรงให้ผู้ขาย</strong>
+            <small>โอนตรงเข้าบัญชีผู้ขายหรือนัดจ่ายเงินสดหน้างาน แล้วให้ผู้ขายกดยืนยันรับเงิน</small>
+          </label>
+        </div>
+
+        <div id="checkoutEscrowBox" class="qr-panel">
+          <div class="qr-card">
+            <div class="qr-header-bar">THAI QR PROMPTPAY</div>
+            ${buildPromptPayQrSvg(qrSeed)}
+          </div>
+          <div class="qr-details">
+            <strong>${escapeHtml(buyerPaymentConfig.platformAccountName)}</strong>
+            <p>พร้อมเพย์บัญชีกลาง: <strong>${escapeHtml(buyerPaymentConfig.platformPromptPayId)}</strong></p>
+            <p>อ้างอิงรายการ: <strong>${escapeHtml(order.orderCode)}</strong></p>
+            <div class="qr-amount-big">${money(order.finalBuyerAmount)}</div>
+            <p style="margin-top:6px;color:var(--muted);">สแกนจ่ายแล้วแนบสลิปด้านล่าง ฝ่ายการเงินจะตรวจยืนยันให้ทันที</p>
+          </div>
+        </div>
+
+        <div id="checkoutDirectBox" class="direct-panel hidden">
+          <strong>ข้อมูลชำระตรงกับผู้ขาย: ${escapeHtml(order.sellerName)}</strong>
+          <p>บัญชีรับเงินผู้ขาย: <strong>${escapeHtml(order.sellerBank || "สอบถามทางแชท")}</strong></p>
+          <p>เบอร์ติดต่อ: ${escapeHtml(order.sellerPhone || "-")}</p>
+          <p>ยอดที่ต้องชำระ: <strong>${money(order.finalBuyerAmount)}</strong> (แนบสลิปโอนตรง หรือระบุว่านัดจ่ายเงินสดหน้างานก็ได้)</p>
+        </div>
+
+        <label class="field-label" id="slipFieldLabel">แนบภาพสลิปโอนเงิน <span id="slipReqStar">*</span>
+          <input type="file" name="slipFile" id="checkoutSlipInput" accept=".jpg,.jpeg,.png,.webp,image/*" required>
+          <small class="field-hint" id="slipFieldHint">รองรับไฟล์ .jpg, .png, .webp ขนาดไม่เกิน 5 MB (บังคับสำหรับการชำระผ่าน QR ระบบกลาง)</small>
+        </label>
+        <div class="slip-preview-wrap hidden" id="slipPreviewWrap">
+          <img id="slipPreviewImg" class="slip-preview-img" alt="ตัวอย่างสลิป">
+        </div>
+
+        <label class="field-label" style="margin-top:12px;">หมายเหตุ / เวลาโอน / นัดจ่ายเงิน
+          <input name="note" maxlength="280" placeholder="เช่น โอนจากกสิกร เวลา 23:15 หรือ นัดจ่ายเงินสดตอนรับของ">
+        </label>
+
+        <div class="table-actions" style="justify-content:flex-end;">
+          <button type="button" class="button button-secondary" data-close-action="1">ยกเลิก</button>
+          <button type="submit" class="button button-primary" id="checkoutSubmitBtn">ส่งสลิปให้ฝ่ายการเงินตรวจ</button>
+        </div>
+      </form>
+    `;
+
+    const form = document.getElementById("checkoutPayForm");
+    const slipInput = document.getElementById("checkoutSlipInput");
+    const previewWrap = document.getElementById("slipPreviewWrap");
+    const previewImg = document.getElementById("slipPreviewImg");
+
+    form.querySelectorAll("input[name='paymentMethod']").forEach(radio => {
+      radio.addEventListener("change", () => {
+        const isEscrow = radio.value === "PlatformEscrow";
+        form.querySelectorAll(".pay-method-card").forEach(card => {
+          card.classList.toggle("selected", card.dataset.payCard === radio.value);
+        });
+        document.getElementById("checkoutEscrowBox").classList.toggle("hidden", !isEscrow);
+        document.getElementById("checkoutDirectBox").classList.toggle("hidden", isEscrow);
+        slipInput.required = isEscrow;
+        document.getElementById("slipReqStar").classList.toggle("hidden", !isEscrow);
+        document.getElementById("slipFieldHint").textContent = isEscrow
+          ? "รองรับไฟล์ .jpg, .png, .webp ขนาดไม่เกิน 5 MB (บังคับสำหรับการชำระผ่าน QR ระบบกลาง)"
+          : "ไม่บังคับแนบสลิปหากนัดจ่ายเงินสดหน้างาน (ถ้าโอนตรงสามารถแนบสลิปให้ผู้ขายตรวจได้)";
+        document.getElementById("checkoutSubmitBtn").textContent = isEscrow
+          ? "ส่งสลิปให้ฝ่ายการเงินตรวจ"
+          : "แจ้งชำระเงินตรงให้ผู้ขายยืนยัน";
+      });
+    });
+
+    slipInput.addEventListener("change", () => {
+      const file = slipInput.files?.[0];
+      if (file) {
+        previewImg.src = URL.createObjectURL(file);
+        previewWrap.classList.remove("hidden");
+      } else {
+        previewWrap.classList.add("hidden");
+      }
+    });
+
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      try {
+        const res = await api(`/api/buyer/orders/${order.id}/pay`, {
+          method: "POST",
+          body: fd
+        });
+        actionDialog.close();
+        showToast(res.message);
+        await loadBuyerDashboard();
+      } catch (err) {
+        showToast(err.message, true);
+      }
+    });
+
+    openDialogSafe(actionDialog);
   }
 
   function auctionStatusPill(status) {
@@ -422,7 +598,7 @@
       } else if (latestId > lastNotifiedMessageId && incoming) {
         lastNotifiedMessageId = latestId;
         if (activeView === "messages" && activeConversationId === incoming.conversationId) {
-          await openConversation(incoming.conversationId);
+          await openConversation(incoming.conversationId, { preserveScroll: true });
         } else {
           const snippet = incoming.body.length > 60 ? `${incoming.body.slice(0, 60)}…` : incoming.body;
           showToast(`💬 ข้อความใหม่จาก ${incoming.senderName}: ${snippet}`, false, async () => {
@@ -522,7 +698,8 @@
         : `<p class="dialog-minimum">ยังไม่มีผู้เสนอราคา เป็นคนแรกที่เริ่มประมูลได้เลย</p>`;
 
       let bidControlHtml = "";
-      if (p.isClosed) {
+      const isExpiredNow = p.isClosed || parseUtcDate(p.endAt).getTime() <= Date.now();
+      if (isExpiredNow) {
         bidControlHtml = `<div class="info-banner">รายการนี้ปิดประมูลแล้ว</div>`;
       } else if (!p.hasStarted) {
         bidControlHtml = `<div class="info-banner">เริ่มเปิดประมูลวันที่ ${formatDateTime(p.startAt)}</div>`;
@@ -532,7 +709,7 @@
         bidControlHtml = `<div class="info-banner">บัญชีปัจจุบัน (${escapeHtml(roleLabels[currentUser.role])}) สามารถดูรายละเอียดได้เท่านั้น — สลับเป็นบทบาท "ผู้ประมูล" เพื่อเสนอราคา</div>`;
       } else {
         bidControlHtml = `
-          <form class="dialog-bid-form" id="bidForm">
+          <form class="dialog-bid-form" id="bidForm" data-end-at="${escapeHtml(p.endAt)}">
             <input name="bid" type="number" step="1" min="${p.minNextBid}" value="${p.minNextBid}" required>
             <button type="submit">ยืนยันเสนอราคา</button>
           </form>
@@ -604,8 +781,12 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="6">คุณยังไม่มีประวัติการเสนอราคา</td></tr>`;
 
+    // Cache buyer orders & payment config
+    buyerOrdersCache = data.orders || [];
+    if (data.paymentConfig) buyerPaymentConfig = data.paymentConfig;
+
     // Unpaid payments
-    const unpaid = data.orders.filter(o => o.paymentStatus === "Unpaid");
+    const unpaid = buyerOrdersCache.filter(o => o.paymentStatus === "Unpaid");
     document.getElementById("paymentList").innerHTML = unpaid.length
       ? unpaid.map(o => `
         <article class="payment-card">
@@ -614,18 +795,19 @@
             <small>${escapeHtml(o.orderCode)} · ${escapeHtml(o.categoryName)} · ผู้ขาย ${escapeHtml(o.sellerName)}</small>
             <h3>${escapeHtml(o.itemName)}</h3>
             <p>${o.discountAmount > 0 ? `<strong style="color:#966222;">✦ ${escapeHtml(o.discountReason)} (-${money(o.discountAmount)})</strong>` : "ไม่มีส่วนลดหมวดเดียวกัน (ซื้อชิ้นต่อไปในหมวดนี้เพื่อรับส่วนลด)"}</p>
+            ${o.paymentRejectReason ? `<p style="color:var(--rose);margin-top:4px;"><strong>ถูกปฏิเสธครั้งก่อน:</strong> ${escapeHtml(o.paymentRejectReason)}</p>` : ""}
           </div>
           <div class="payment-pricing">
             ${o.discountAmount > 0 ? `<span class="payment-strike">${money(o.winningPrice)}</span>` : ""}
             <div class="payment-amount">${money(o.finalBuyerAmount)}</div>
           </div>
-          <button class="button button-primary" type="button" data-pay-order="${o.id}">ชำระเงิน <span>→</span></button>
+          <button class="button button-primary" type="button" data-pay-order="${o.id}">เลือกวิธีชำระเงิน <span>→</span></button>
         </article>`).join("")
       : `<div class="empty-state">ไม่มีรายการค้างชำระในขณะนี้</div>`;
 
     // All won orders & meetups
-    document.getElementById("buyerOrdersRows").innerHTML = data.orders.length
-      ? data.orders.map(o => `
+    document.getElementById("buyerOrdersRows").innerHTML = buyerOrdersCache.length
+      ? buyerOrdersCache.map(o => `
         <tr>
           <td>
             <div class="table-product">
@@ -638,13 +820,22 @@
             ${money(o.finalBuyerAmount)}
             ${o.discountAmount > 0 ? `<small class="table-subline" style="color:#966222;">ลด ${o.discountPercent}% (-${money(o.discountAmount)})</small>` : ""}
           </td>
-          <td>${paymentPill(o.paymentStatus)}${o.financeNote ? `<small class="table-subline">${escapeHtml(o.financeNote)}</small>` : ""}</td>
+          <td>
+            ${paymentPill(o.paymentStatus, o.paymentMethod)}
+            <small class="table-subline">${escapeHtml(paymentMethodLabel(o.paymentMethod))}</small>
+            ${o.paymentRejectReason ? `<small class="table-subline" style="color:var(--rose);">เหตุผล: ${escapeHtml(o.paymentRejectReason)}</small>` : ""}
+            ${o.financeNote ? `<small class="table-subline">${escapeHtml(o.financeNote)}</small>` : ""}
+          </td>
           <td>
             ${meetupPill(o.meetupStatus)}
             ${o.meetupLocation ? `<small class="table-subline">⌖ ${escapeHtml(o.meetupLocation)} (${formatDateTime(o.meetupAt)})</small>` : ""}
           </td>
           <td>
             <div class="table-actions">
+              ${o.paymentStatus === "Unpaid"
+                ? `<button class="button button-primary button-sm" type="button" data-pay-order="${o.id}">ชำระเงิน</button>` : ""}
+              ${o.paymentSlipUrl
+                ? `<button class="button button-secondary button-sm" type="button" data-view-slip="${escapeHtml(o.paymentSlipUrl)}" data-slip-title="สลิป ${escapeHtml(o.orderCode)}" data-slip-note="${escapeHtml(o.paymentNote || "")}">ดูสลิป</button>` : ""}
               ${o.paymentStatus === "Paid" && o.meetupStatus !== "Completed"
                 ? `<button class="button button-primary button-sm" type="button" data-confirm-received="${o.id}">ยืนยันรับสินค้าแล้ว</button>` : ""}
               ${o.conversationId
@@ -769,7 +960,11 @@
             ${money(o.sellerNetAmount)}
             <small class="table-subline">ชำระ ${money(o.finalBuyerAmount)} - ค่าธรรมเนียม ${money(o.platformFeeAmount)}</small>
           </td>
-          <td>${paymentPill(o.paymentStatus)}</td>
+          <td>
+            ${paymentPill(o.paymentStatus, o.paymentMethod)}
+            <small class="table-subline">${escapeHtml(paymentMethodLabel(o.paymentMethod))}</small>
+            ${o.paymentNote ? `<small class="table-subline">โน้ต: ${escapeHtml(o.paymentNote)}</small>` : ""}
+          </td>
           <td>
             ${meetupPill(o.meetupStatus)}
             ${o.meetupLocation ? `<small class="table-subline">⌖ ${escapeHtml(o.meetupLocation)} (${formatDateTime(o.meetupAt)})</small>` : ""}
@@ -777,6 +972,11 @@
           <td>${payoutPill(o.payoutStatus)}${o.financeNote ? `<small class="table-subline">${escapeHtml(o.financeNote)}</small>` : ""}</td>
           <td>
             <div class="table-actions">
+              ${o.paymentSlipUrl
+                ? `<button class="button button-secondary button-sm" type="button" data-view-slip="${escapeHtml(o.paymentSlipUrl)}" data-slip-title="สลิป ${escapeHtml(o.orderCode)}" data-slip-note="${escapeHtml(o.paymentNote || "")}">ดูสลิป</button>` : ""}
+              ${o.canVerifyDirectPayment
+                ? `<button class="button button-primary button-sm" type="button" data-seller-verify-pay="${o.id}">ยืนยันได้รับเงินแล้ว</button>
+                   <button class="button button-danger button-sm" type="button" data-seller-reject-pay="${o.id}" data-code="${escapeHtml(o.orderCode)}">ปฏิเสธ</button>` : ""}
               ${o.paymentStatus === "Paid" && o.meetupStatus !== "Completed"
                 ? `<button class="button button-secondary button-sm" type="button" data-schedule-meetup="${o.id}" data-loc="${escapeHtml(o.meetupLocation || "")}">กำหนดนัดรับ</button>` : ""}
               ${o.paymentStatus === "Paid" && (o.meetupStatus === "NotScheduled" || o.meetupStatus === "Scheduled")
@@ -827,7 +1027,12 @@
       : `<div class="empty-state" style="border:0;">ไม่พบบทสนทนา</div>`;
   }
 
-  async function openConversation(convId) {
+  async function openConversation(convId, { preserveScroll = false } = {}) {
+    const isSameConv = activeConversationId === convId;
+    const msgBox = document.getElementById("chatMessages");
+    const prevScrollTop = msgBox ? msgBox.scrollTop : 0;
+    const wasNearBottom = !msgBox || (msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight < 90);
+
     activeConversationId = convId;
     const conv = await api(`/api/chat/conversations/${convId}/messages`);
     const summary = conversationsCache.find(c => c.id === convId);
@@ -848,21 +1053,24 @@
     `;
 
     const disputeBanner = conv.disputes.length
-      ? `<div class="info-banner banner-error" style="margin-bottom:4px;"><strong>⚑ เคสนี้มีการแจ้งข้อพิพาท (${conv.disputes.length} รายการ)</strong>สถานะล่าสุด: ${escapeHtml(conv.disputes[0].status)} — ${escapeHtml(conv.disputes[0].reason)}${conv.disputes[0].adminNote ? ` | แอดมิน: ${escapeHtml(conv.disputes[0].adminNote)}` : ""}</div>`
+      ? `<div class="info-banner banner-error" style="margin-bottom:4px;flex-shrink:0;"><strong>⚑ เคสนี้มีการแจ้งข้อพิพาท (${conv.disputes.length} รายการ)</strong>สถานะล่าสุด: ${escapeHtml(conv.disputes[0].status)} — ${escapeHtml(conv.disputes[0].reason)}${conv.disputes[0].adminNote ? ` | แอดมิน: ${escapeHtml(conv.disputes[0].adminNote)}` : ""}</div>`
       : "";
 
     const msgsHtml = conv.messages.length
       ? conv.messages.map(m => `
         <div class="chat-bubble ${m.isMine ? "sent" : "received"}">
           <span class="sender-tag">${escapeHtml(m.senderName)}</span>
-          ${escapeHtml(m.body)}
+          <span class="bubble-body">${escapeHtml(m.body)}</span>
           <small>${formatDateTime(m.sentAt)}</small>
         </div>`).join("")
       : `<div class="empty-state">เริ่มพิมพ์ข้อความเพื่อสอบถามรายละเอียดหรือนัดรับสินค้า</div>`;
 
-    const msgBox = document.getElementById("chatMessages");
     msgBox.innerHTML = disputeBanner + msgsHtml;
-    msgBox.scrollTop = msgBox.scrollHeight;
+    if (preserveScroll && isSameConv && !wasNearBottom) {
+      msgBox.scrollTop = prevScrollTop;
+    } else {
+      msgBox.scrollTop = msgBox.scrollHeight;
+    }
 
     document.getElementById("chatInput").disabled = false;
     document.getElementById("chatSendBtn").disabled = false;
@@ -994,8 +1202,8 @@
     const set = data.settings;
 
     document.getElementById("financeSummaryCards").innerHTML = `
-      <div><small>ยอดผู้ซื้อชำระรวม</small><strong>${money(s.totalBuyerPaid)}</strong><span>จาก ${s.paidOrdersCount} รายการที่ชำระแล้ว</span></div>
-      <div><small>รายได้ค่าธรรมเนียม</small><strong>${money(s.totalPlatformFee)}</strong><span>หัก ${set.platformFeePercent}% จากยอดสุทธิ</span></div>
+      <div><small>ยอดผู้ซื้อชำระรวม</small><strong>${money(s.totalBuyerPaid)}</strong><span>ชำระแล้ว ${s.paidOrdersCount} · รอตรวจสลิป ${s.pendingVerifyCount}</span></div>
+      <div><small>รายได้ค่าธรรมเนียม (Escrow)</small><strong>${money(s.totalPlatformFee)}</strong><span>หัก ${set.platformFeePercent}% จากยอดระบบกลาง</span></div>
       <div><small>รอปล่อยเงินให้ผู้ขาย</small><strong>${money(s.pendingRelease)}</strong><span>ปล่อยแล้ว ${money(s.totalReleased)}</span></div>
       <div><small>ยอดคืนเงินทั้งหมด</small><strong>${money(s.totalRefunded)}</strong><span>รอชำระ ${s.unpaidOrdersCount} รายการ</span></div>
     `;
@@ -1008,7 +1216,7 @@
               <img class="table-thumb" src="${safeImageUrl(o.imageUrl)}" alt="" onerror="this.src='${imageFallback}'">
               <div>
                 <strong>${escapeHtml(o.itemName)}</strong>
-                <small>${escapeHtml(o.orderCode)} · ${escapeHtml(o.categoryName)} ${o.hasOpenDispute ? "· ⚑ มีข้อพิพาท" : ""}</small>
+                <small>${escapeHtml(o.orderCode)} · ${escapeHtml(paymentMethodLabel(o.paymentMethod))} ${o.hasOpenDispute ? "· ⚑ มีข้อพิพาท" : ""}</small>
               </div>
             </div>
           </td>
@@ -1019,16 +1227,22 @@
           </td>
           <td class="table-price">
             รับ ${money(o.finalBuyerAmount)}
-            <small class="table-subline">ค่าธรรมเนียม ${money(o.platformFeeAmount)} · โอนผู้ขาย <strong>${money(o.sellerNetAmount)}</strong></small>
+            <small class="table-subline">${o.paymentMethod === "DirectToSeller" ? "จ่ายตรงผู้ขาย (ไม่หักค่าธรรมเนียมกลาง)" : `ค่าธรรมเนียม ${money(o.platformFeeAmount)} · โอนผู้ขาย <strong>${money(o.sellerNetAmount)}</strong>`}</small>
           </td>
-          <td>${paymentPill(o.paymentStatus)}<div style="margin-top:4px;">${meetupPill(o.meetupStatus)}</div></td>
+          <td>
+            ${paymentPill(o.paymentStatus, o.paymentMethod)}
+            ${o.paymentNote ? `<small class="table-subline">โน้ต: ${escapeHtml(o.paymentNote)}</small>` : ""}
+            <div style="margin-top:4px;">${meetupPill(o.meetupStatus)}</div>
+          </td>
           <td>${payoutPill(o.payoutStatus)}${o.financeNote ? `<small class="table-subline">${escapeHtml(o.financeNote)}</small>` : ""}</td>
           <td>
             <div class="table-actions">
+              ${o.paymentSlipUrl ? `<button class="button button-secondary button-sm" type="button" data-view-slip="${escapeHtml(o.paymentSlipUrl)}" data-slip-title="สลิป ${escapeHtml(o.orderCode)} (${escapeHtml(o.buyerName)})" data-slip-note="${escapeHtml(o.paymentNote || "")}">ดูสลิป</button>` : ""}
+              ${o.canVerifyEscrowPayment ? `<button class="button button-primary button-sm" type="button" data-finance-verify-pay="${o.id}">ยืนยันสลิป</button><button class="button button-danger button-sm" type="button" data-finance-reject-pay="${o.id}" data-code="${escapeHtml(o.orderCode)}">ปฏิเสธสลิป</button>` : ""}
               ${o.canRelease ? `<button class="button button-primary button-sm" type="button" data-finance-release="${o.id}" data-code="${escapeHtml(o.orderCode)}" data-amt="${o.sellerNetAmount}">ปล่อยเงินผู้ขาย</button>` : ""}
               ${o.canRefund ? `<button class="button button-danger button-sm" type="button" data-finance-refund="${o.id}" data-code="${escapeHtml(o.orderCode)}" data-amt="${o.finalBuyerAmount}">คืนเงินผู้ซื้อ</button>` : ""}
-              ${!o.canRelease && !o.canRefund && o.payoutStatus === "Pending"
-                ? `<small style="color:var(--muted);">${o.paymentStatus === "Unpaid" ? "รอผู้ซื้อชำระเงิน" : "รอยืนยันส่งมอบ/รับของ"}</small>` : ""}
+              ${!o.canVerifyEscrowPayment && !o.canRelease && !o.canRefund && o.payoutStatus === "Pending"
+                ? `<small style="color:var(--muted);">${o.paymentStatus === "Unpaid" ? "รอผู้ซื้อชำระเงิน" : o.paymentStatus === "PendingVerification" ? "รอผู้ขายยืนยันจ่ายตรง" : "รอยืนยันส่งมอบ/รับของ"}</small>` : ""}
             </div>
           </td>
         </tr>`).join("")
@@ -1039,6 +1253,8 @@
     rf.sameCategoryDiscountPercent.value = set.sameCategoryDiscountPercent;
     rf.platformFeePercent.value = set.platformFeePercent;
     rf.globalMinBidIncrement.value = set.globalMinBidIncrement;
+    if (rf.platformPromptPayId) rf.platformPromptPayId.value = set.platformPromptPayId || "";
+    if (rf.platformAccountName) rf.platformAccountName.value = set.platformAccountName || "";
     document.getElementById("financeRulesUpdated").textContent = `อัปเดตล่าสุด: ${formatDateTime(set.updatedAt)}`;
 
     // Report Cards & Table
@@ -1061,7 +1277,7 @@
           <td class="table-price">${money(o.finalBuyerAmount)}</td>
           <td>${money(o.platformFeeAmount)}</td>
           <td class="table-price">${money(o.sellerNetAmount)}</td>
-          <td>${paymentPill(o.paymentStatus)} ${payoutPill(o.payoutStatus)}</td>
+          <td>${paymentPill(o.paymentStatus, o.paymentMethod)} ${payoutPill(o.payoutStatus)}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="10">ยังไม่มีข้อมูลรายงาน</td></tr>`;
   }
@@ -1263,7 +1479,14 @@
   auctionDialog.addEventListener("submit", async e => {
     if (e.target.id !== "bidForm") return;
     e.preventDefault();
-    const amount = Number(new FormData(e.target).get("bid"));
+    const form = e.target;
+    if (form.dataset.endAt && parseUtcDate(form.dataset.endAt).getTime() <= Date.now()) {
+      showToast("รายการนี้ปิดประมูลแล้ว ไม่สามารถเสนอราคาได้", true);
+      await openProduct(selectedProductId);
+      if (activeView === "today") await loadAuctions();
+      return;
+    }
+    const amount = Number(new FormData(form).get("bid"));
     try {
       const res = await api(`/api/auctions/${selectedProductId}/bid`, {
         method: "POST",
@@ -1273,7 +1496,11 @@
       await openProduct(selectedProductId);
       if (activeView === "today") await loadAuctions();
       else if (activeView === "mybids") await loadBuyerDashboard();
-    } catch (err) { showToast(err.message, true); }
+    } catch (err) {
+      showToast(err.message, true);
+      await openProduct(selectedProductId);
+      if (activeView === "today") await loadAuctions();
+    }
   });
 
   // Seller: Create Listing Form
@@ -1356,6 +1583,7 @@
       });
       input.value = "";
       await loadConversations(activeConversationId);
+      input.focus();
     } catch (err) { showToast(err.message, true); }
   });
 
@@ -1404,7 +1632,9 @@
         body: JSON.stringify({
           sameCategoryDiscountPercent: Number(fd.get("sameCategoryDiscountPercent")),
           platformFeePercent: Number(fd.get("platformFeePercent")),
-          globalMinBidIncrement: Number(fd.get("globalMinBidIncrement"))
+          globalMinBidIncrement: Number(fd.get("globalMinBidIncrement")),
+          platformPromptPayId: fd.get("platformPromptPayId"),
+          platformAccountName: fd.get("platformAccountName")
         })
       });
       showToast(res.message);
@@ -1509,14 +1739,83 @@
       return;
     }
 
-    // Buyer: Pay Order
+    // View Payment Slip Modal
+    const slipBtn = target.closest("[data-view-slip]");
+    if (slipBtn) {
+      openSlipModal(slipBtn.dataset.viewSlip, slipBtn.dataset.slipTitle || "หลักฐานการชำระเงิน", slipBtn.dataset.slipNote || "");
+      return;
+    }
+
+    // Buyer: Open Hybrid Checkout Modal (QR Escrow or Direct to Seller)
     const payBtn = target.closest("[data-pay-order]");
     if (payBtn) {
+      const order = buyerOrdersCache.find(o => o.id === Number(payBtn.dataset.payOrder));
+      if (!order) return;
+      openCheckoutModal(order);
+      return;
+    }
+
+    // Seller: Verify Direct Payment (Approve / Reject)
+    const sellerVerifyBtn = target.closest("[data-seller-verify-pay]");
+    if (sellerVerifyBtn) {
       try {
-        const res = await api(`/api/buyer/orders/${payBtn.dataset.payOrder}/pay`, { method: "POST" });
+        const res = await api(`/api/seller/orders/${sellerVerifyBtn.dataset.sellerVerifyPay}/verify-payment`, {
+          method: "POST", body: JSON.stringify({ approve: true })
+        });
         showToast(res.message);
-        await loadBuyerDashboard();
+        await loadSellerDashboard();
       } catch (err) { showToast(err.message, true); }
+      return;
+    }
+
+    const sellerRejectPayBtn = target.closest("[data-seller-reject-pay]");
+    if (sellerRejectPayBtn) {
+      showReasonModal({
+        title: `ปฏิเสธการแจ้งชำระเงินตรง (${sellerRejectPayBtn.dataset.code})`,
+        subtitle: "ระบบจะแจ้งเหตุผลให้ผู้ซื้อตรวจสอบและส่งใหม่",
+        label: "เหตุผล",
+        placeholder: "เช่น ยังไม่พบยอดโอนเข้าบัญชี หรือยอดเงินไม่ครบถ้วน",
+        submitText: "ยืนยันปฏิเสธ",
+        onSubmit: async reason => {
+          const res = await api(`/api/seller/orders/${sellerRejectPayBtn.dataset.sellerRejectPay}/verify-payment`, {
+            method: "POST", body: JSON.stringify({ approve: false, reason })
+          });
+          showToast(res.message);
+          await loadSellerDashboard();
+        }
+      });
+      return;
+    }
+
+    // Finance: Verify Escrow Slip (Approve / Reject)
+    const finVerifyBtn = target.closest("[data-finance-verify-pay]");
+    if (finVerifyBtn) {
+      try {
+        const res = await api(`/api/finance/orders/${finVerifyBtn.dataset.financeVerifyPay}/verify-payment`, {
+          method: "POST", body: JSON.stringify({ approve: true })
+        });
+        showToast(res.message);
+        await loadFinanceDashboard();
+      } catch (err) { showToast(err.message, true); }
+      return;
+    }
+
+    const finRejectPayBtn = target.closest("[data-finance-reject-pay]");
+    if (finRejectPayBtn) {
+      showReasonModal({
+        title: `ปฏิเสธสลิปชำระเงิน (${finRejectPayBtn.dataset.code})`,
+        subtitle: "ผู้ซื้อจะได้รับแจ้งเตือนและสามารถอัปโหลดสลิปใหม่ได้",
+        label: "เหตุผลในการปฏิเสธสลิป",
+        placeholder: "เช่น สลิปไม่ชัดเจน หรือยอดโอนไม่ตรงกับยอดสุทธิ",
+        submitText: "ยืนยันปฏิเสธสลิป",
+        onSubmit: async reason => {
+          const res = await api(`/api/finance/orders/${finRejectPayBtn.dataset.financeRejectPay}/verify-payment`, {
+            method: "POST", body: JSON.stringify({ approve: false, reason })
+          });
+          showToast(res.message);
+          await loadFinanceDashboard();
+        }
+      });
       return;
     }
 
@@ -1845,11 +2144,40 @@
     }
   });
 
-  // Live countdown ticker based on real ISO endAt
+  // Live countdown ticker based on real UTC ISO endAt
+  let expirySyncPending = false;
   window.setInterval(() => {
+    let anyExpiredJustNow = false;
+
     document.querySelectorAll("[data-end-at]").forEach(el => {
-      el.textContent = remainingText(el.dataset.endAt);
+      if (el.tagName === "FORM") return;
+      const expired = parseUtcDate(el.dataset.endAt).getTime() <= Date.now();
+      const prevText = el.textContent;
+      el.textContent = expired ? "ปิดประมูลแล้ว" : remainingText(el.dataset.endAt);
+      if (expired && prevText !== "ปิดประมูลแล้ว") {
+        anyExpiredJustNow = true;
+      }
     });
+
+    // Immediately lock bid form inside open dialog once expired
+    const openBidForm = document.getElementById("bidForm");
+    if (openBidForm && openBidForm.dataset.endAt && parseUtcDate(openBidForm.dataset.endAt).getTime() <= Date.now()) {
+      openBidForm.querySelectorAll("input, button").forEach(ctrl => { ctrl.disabled = true; });
+      const btn = openBidForm.querySelector("button[type='submit']");
+      if (btn) btn.textContent = "ปิดประมูลแล้ว";
+      anyExpiredJustNow = true;
+    }
+
+    if (anyExpiredJustNow && !expirySyncPending) {
+      expirySyncPending = true;
+      window.setTimeout(async () => {
+        try {
+          if (auctionDialog.open && selectedProductId) await openProduct(selectedProductId);
+          if (activeView === "today") await loadAuctions();
+        } catch {}
+        expirySyncPending = false;
+      }, 600);
+    }
   }, 1000);
 
   // Boot

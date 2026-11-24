@@ -8,8 +8,9 @@ using Microsoft.EntityFrameworkCore;
 namespace AppProject.Controllers;
 
 [Route("api")]
-public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecycle) : ApiBaseController(db)
+public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecycle, IWebHostEnvironment env) : ApiBaseController(db)
 {
+    private static readonly string[] AllowedSlipExtensions = [".jpg", ".jpeg", ".png", ".webp"];
     public record PlaceBidRequest(decimal Amount);
     public record ApplySellerRequest(string ShopName, string Phone, string BankAccount, string? SellerBio);
 
@@ -193,9 +194,17 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
 
         if (item is null)
             return NotFound(new { message = "ไม่พบสินค้าประมูล" });
-        if (item.Status != AuctionStatuses.Approved || item.EndAt <= now)
+
+        var endUtc = item.EndAt.Kind == DateTimeKind.Utc ? item.EndAt : DateTime.SpecifyKind(item.EndAt, DateTimeKind.Utc);
+        var startUtc = item.StartAt.Kind == DateTimeKind.Utc ? item.StartAt : DateTime.SpecifyKind(item.StartAt, DateTimeKind.Utc);
+
+        if (item.Status != AuctionStatuses.Approved || endUtc <= now)
+        {
+            if (item.Status == AuctionStatuses.Approved && endUtc <= now)
+                await lifecycle.CloseExpiredAuctionsAsync();
             return BadRequest(new { message = "รายการนี้ปิดประมูลแล้ว ไม่สามารถเสนอราคาได้" });
-        if (item.StartAt > now)
+        }
+        if (startUtc > now)
             return BadRequest(new { message = "รายการนี้ยังไม่ถึงเวลาเริ่มประมูล" });
         if (item.SellerId == user.Id)
             return BadRequest(new { message = "ไม่สามารถเสนอราคาสินค้าของตัวเองได้" });
@@ -274,12 +283,21 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
             .OrderByDescending(o => o.CreatedAt)
             .ToListAsync();
 
+        var settings = await lifecycle.GetSettingsAsync();
+
         var convMap = await Db.Conversations
             .Where(c => c.BuyerId == user.Id)
             .ToDictionaryAsync(c => c.AuctionItemId, c => c.Id);
 
         return Ok(new
         {
+            paymentConfig = new
+            {
+                settings.PlatformPromptPayId,
+                settings.PlatformAccountName,
+                settings.SameCategoryDiscountPercent,
+                settings.PlatformFeePercent
+            },
             saved = saved.Select(s => new
             {
                 s.AuctionItem!.Id,
@@ -325,12 +343,18 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
                 o.SellerId,
                 sellerName = o.Seller?.ShopName ?? o.Seller?.DisplayName ?? "",
                 sellerPhone = o.Seller?.Phone ?? "",
+                sellerBank = o.Seller?.BankAccount ?? "-",
                 o.WinningPrice,
                 o.DiscountPercent,
                 o.DiscountReason,
                 o.DiscountAmount,
                 o.FinalBuyerAmount,
+                o.PaymentMethod,
                 o.PaymentStatus,
+                o.PaymentSlipUrl,
+                o.PaymentNote,
+                o.PaymentSubmittedAt,
+                o.PaymentRejectReason,
                 o.PaidAt,
                 o.MeetupStatus,
                 o.MeetupLocation,
@@ -348,7 +372,12 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
 
     [Authorize(Roles = Roles.Buyer)]
     [HttpPost("buyer/orders/{orderId:int}/pay")]
-    public async Task<IActionResult> PayOrder(int orderId)
+    [RequestSizeLimit(6_000_000)]
+    public async Task<IActionResult> PayOrder(
+        int orderId,
+        [FromForm] string? paymentMethod,
+        [FromForm] string? note,
+        [FromForm] IFormFile? slipFile)
     {
         var user = await GetCurrentActiveUserAsync();
         if (user is null) return Unauthorized();
@@ -359,7 +388,37 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
 
         if (order is null) return NotFound(new { message = "ไม่พบรายการชำระเงิน" });
         if (order.PaymentStatus != PaymentStatuses.Unpaid)
-            return BadRequest(new { message = "รายการนี้ชำระเงินไปแล้วหรือไม่สามารถชำระได้" });
+            return BadRequest(new { message = "รายการนี้แจ้งชำระเงินไปแล้ว หรืออยู่ระหว่างรอตรวจสอบ" });
+
+        var method = paymentMethod == PaymentMethods.DirectToSeller
+            ? PaymentMethods.DirectToSeller
+            : PaymentMethods.PlatformEscrow;
+
+        if (method == PaymentMethods.PlatformEscrow && (slipFile is null || slipFile.Length == 0))
+            return BadRequest(new { message = "การชำระผ่าน QR ระบบกลาง กรุณาแนบภาพสลิปโอนเงินเพื่อให้ฝ่ายการเงินตรวจสอบ" });
+
+        string? savedSlipUrl = null;
+        if (slipFile is not null && slipFile.Length > 0)
+        {
+            if (slipFile.Length > 5 * 1024 * 1024)
+                return BadRequest(new { message = "ไฟล์สลิปต้องมีขนาดไม่เกิน 5 MB" });
+
+            var ext = Path.GetExtension(slipFile.FileName).ToLowerInvariant();
+            if (!AllowedSlipExtensions.Contains(ext))
+                return BadRequest(new { message = "รองรับเฉพาะไฟล์รูปภาพ .jpg, .jpeg, .png หรือ .webp เท่านั้น" });
+
+            var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+            var slipsDir = Path.Combine(webRoot, "uploads", "slips");
+            Directory.CreateDirectory(slipsDir);
+
+            var fileName = $"slip-{order.Id}-{Guid.NewGuid():N}{ext}";
+            var fullPath = Path.Combine(slipsDir, fileName);
+            await using (var fs = System.IO.File.Create(fullPath))
+            {
+                await slipFile.CopyToAsync(fs);
+            }
+            savedSlipUrl = $"/uploads/slips/{fileName}";
+        }
 
         // Lock latest pricing including same-category discount
         if (order.AuctionItem is not null)
@@ -369,13 +428,27 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
             order.DiscountReason = pricing.reason;
             order.DiscountAmount = pricing.discountAmount;
             order.FinalBuyerAmount = pricing.finalBuyerAmount;
-            order.PlatformFeePercent = pricing.feePercent;
-            order.PlatformFeeAmount = pricing.feeAmount;
-            order.SellerNetAmount = pricing.sellerNet;
+            if (method == PaymentMethods.PlatformEscrow)
+            {
+                order.PlatformFeePercent = pricing.feePercent;
+                order.PlatformFeeAmount = pricing.feeAmount;
+                order.SellerNetAmount = pricing.sellerNet;
+            }
+            else
+            {
+                order.PlatformFeePercent = 0;
+                order.PlatformFeeAmount = 0;
+                order.SellerNetAmount = pricing.finalBuyerAmount;
+            }
         }
 
-        order.PaymentStatus = PaymentStatuses.Paid;
-        order.PaidAt = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        order.PaymentMethod = method;
+        order.PaymentStatus = PaymentStatuses.PendingVerification;
+        order.PaymentSlipUrl = savedSlipUrl;
+        order.PaymentNote = note?.Trim();
+        order.PaymentSubmittedAt = now;
+        order.PaymentRejectReason = null;
 
         // Ensure conversation exists for meetup coordination
         var conv = await Db.Conversations.FirstOrDefaultAsync(
@@ -387,14 +460,54 @@ public class AuctionsController(AppDbContext db, AuctionLifecycleService lifecyc
                 AuctionItemId = order.AuctionItemId,
                 BuyerId = order.BuyerId,
                 SellerId = order.SellerId,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                CreatedAt = now,
+                UpdatedAt = now
             };
             Db.Conversations.Add(conv);
         }
 
+        if (method == PaymentMethods.PlatformEscrow)
+        {
+            var financeIds = await Db.Users
+                .Where(u => u.Role == Roles.Finance && !u.IsSuspended)
+                .Select(u => u.Id)
+                .ToListAsync();
+            foreach (var fid in financeIds)
+            {
+                Db.Notifications.Add(new Notification
+                {
+                    UserId = fid,
+                    Type = "payment_verify",
+                    Title = $"มีสลิป QR ระบบกลางรอตรวจ ({order.OrderCode})",
+                    Body = $"{user.DisplayName} แนบสลิปยอด ฿{order.FinalBuyerAmount:N0} สำหรับ “{order.AuctionItem?.Name}”",
+                    TargetView = "finance-payments",
+                    ReferenceId = order.Id,
+                    IsRead = false,
+                    CreatedAt = now
+                });
+            }
+        }
+        else
+        {
+            Db.Notifications.Add(new Notification
+            {
+                UserId = order.SellerId,
+                Type = "payment_verify",
+                Title = $"ผู้ซื้อแจ้งชำระเงินตรง ({order.OrderCode})",
+                Body = $"{user.DisplayName} แจ้งชำระยอด ฿{order.FinalBuyerAmount:N0} สำหรับ “{order.AuctionItem?.Name}” กรุณาตรวจสอบและกดยืนยัน",
+                TargetView = "seller-orders",
+                ReferenceId = order.Id,
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+
         await Db.SaveChangesAsync();
-        return Ok(new { message = $"ชำระเงิน ฿{order.FinalBuyerAmount:N0} สำเร็จ! รอผู้ขายกำหนดนัดรับหรือแชทนัดรับได้เลย" });
+
+        var msg = method == PaymentMethods.PlatformEscrow
+            ? $"ส่งสลิปยอด ฿{order.FinalBuyerAmount:N0} ให้ฝ่ายการเงินตรวจสอบแล้ว (ระบบคุ้มครองเงินแบบ Shopee)"
+            : $"แจ้งการชำระเงินตรงยอด ฿{order.FinalBuyerAmount:N0} ให้ผู้ขายแล้ว รอผู้ขายกดยืนยัน";
+        return Ok(new { message = msg });
     }
 
     [Authorize(Roles = Roles.Buyer)]

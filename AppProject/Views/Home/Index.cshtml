@@ -167,7 +167,7 @@
 
             <div class="payment-assurance">
                 <span>✓</span>
-                <div><strong>ระบบคุ้มครองผู้ประมูล</strong><p>เงินของคุณจะถูกดูแลโดยฝ่ายการเงิน และจะปล่อยให้ผู้ขายหลังมีการยืนยันส่งมอบ/รับของเรียบร้อย</p></div>
+                <div><strong>เลือกชำระได้ 2 รูปแบบอย่างมั่นใจ</strong><p>1) <strong>QR ระบบกลาง (แบบ Shopee):</strong> โอนเข้าบัญชีกลางแนบสลิปให้ฝ่ายการเงินตรวจ เงินจะถูกคุ้มครองจนกว่าคุณจะยืนยันรับของ · 2) <strong>จ่ายตรงให้ผู้ขาย:</strong> โอนหรือจ่ายสดตอนนัดรับแล้วให้ผู้ขายกดยืนยัน</p></div>
             </div>
         </section>
 
@@ -450,7 +450,15 @@
                         <input name="globalMinBidIncrement" type="number" min="1" step="1" required>
                         <small class="field-hint">ผู้ขายไม่สามารถตั้งขั้นต่ำเสนอราคาต่ำกว่าค่านี้ได้</small>
                     </label>
-                    <button class="button button-primary" type="submit">บันทึกกติกาการเงิน</button>
+                    <div class="field-row">
+                        <label class="field-label">รหัสพร้อมเพย์บัญชีกลาง (PromptPay) <span>*</span>
+                            <input name="platformPromptPayId" maxlength="40" required placeholder="081-999-8888">
+                        </label>
+                        <label class="field-label">ชื่อบัญชีกลางรับโอนเงิน <span>*</span>
+                            <input name="platformAccountName" maxlength="120" required placeholder="บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)">
+                        </label>
+                    </div>
+                    <button class="button button-primary" type="submit">บันทึกกติกาการเงินและข้อมูล QR กลาง</button>
                 </div>
             </form>
         </section>
