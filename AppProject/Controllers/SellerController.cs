@@ -9,11 +9,13 @@ namespace AppProject.Controllers;
 
 [Authorize(Roles = Roles.Seller)]
 [Route("api/seller")]
-public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle) : ApiBaseController(db)
+public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle, IWebHostEnvironment env) : ApiBaseController(db)
 {
+    private static readonly string[] AllowedImageExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+
     public record SellerApplyRequest(string ShopName, string Phone, string BankAccount, string? SellerBio);
 
-    public record CreateListingRequest(
+    public record ListingPayload(
         string Name,
         int CategoryId,
         string Condition,
@@ -30,7 +32,6 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
     {
-        await lifecycle.CloseExpiredAuctionsAsync();
         var user = await GetCurrentActiveUserAsync();
         if (user is null) return Unauthorized();
 
@@ -90,6 +91,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
                 a.EndAt,
                 a.Status,
                 a.RejectReason,
+                canEditOrCancel = a.Status is AuctionStatuses.Pending or AuctionStatuses.Rejected,
                 winnerName = a.Winner?.DisplayName,
                 bidCount = a.Bids.Count,
                 bids = a.Bids
@@ -126,6 +128,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
                 o.PaymentSlipUrl,
                 o.PaymentNote,
                 o.PaymentSubmittedAt,
+                o.PaymentDueAt,
                 o.PaidAt,
                 o.MeetupStatus,
                 o.MeetupLocation,
@@ -143,6 +146,8 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         });
     }
 
+    // Consolidated single apply-seller endpoint for BOTH Buyer and Seller
+    [Authorize(Roles = $"{Roles.Buyer},{Roles.Seller}")]
     [HttpPost("apply")]
     public async Task<IActionResult> UpdateApplication([FromBody] SellerApplyRequest req)
     {
@@ -164,11 +169,43 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         }
 
         await Db.SaveChangesAsync();
-        return Ok(new { message = "บันทึกข้อมูลใบสมัครผู้ขายเรียบร้อยแล้ว", user = MapUserSummary(user) });
+        return Ok(new { message = "ส่งใบสมัครผู้ขายให้แอดมินตรวจสอบแล้ว", user = MapUserSummary(user) });
+    }
+
+    [HttpPost("upload-image")]
+    [RequestSizeLimit(6_000_000)]
+    public async Task<IActionResult> UploadProductImage([FromForm] IFormFile? file)
+    {
+        var user = await GetCurrentActiveUserAsync();
+        if (user is null) return Unauthorized();
+        if (user.SellerStatus != SellerStatuses.Approved)
+            return StatusCode(403, new { message = "บัญชีผู้ขายยังไม่ได้รับการอนุมัติ" });
+
+        if (file is null || file.Length == 0)
+            return BadRequest(new { message = "กรุณาเลือกไฟล์รูปภาพ" });
+        if (file.Length > 5 * 1024 * 1024)
+            return BadRequest(new { message = "ไฟล์รูปภาพต้องมีขนาดไม่เกิน 5 MB" });
+
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (!AllowedImageExtensions.Contains(ext))
+            return BadRequest(new { message = "รองรับเฉพาะไฟล์ .jpg, .jpeg, .png หรือ .webp เท่านั้น" });
+
+        var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+        var productsDir = Path.Combine(webRoot, "uploads", "products");
+        Directory.CreateDirectory(productsDir);
+
+        var fileName = $"item-{user.Id}-{Guid.NewGuid():N}{ext}";
+        var fullPath = Path.Combine(productsDir, fileName);
+        await using (var fs = System.IO.File.Create(fullPath))
+        {
+            await file.CopyToAsync(fs);
+        }
+
+        return Ok(new { imageUrl = $"/uploads/products/{fileName}", message = "อัปโหลดรูปสินค้าเรียบร้อย" });
     }
 
     [HttpPost("listings")]
-    public async Task<IActionResult> CreateListing([FromBody] CreateListingRequest req)
+    public async Task<IActionResult> CreateListing([FromBody] ListingPayload req)
     {
         var user = await GetCurrentActiveUserAsync();
         if (user is null) return Unauthorized();
@@ -176,26 +213,12 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         if (user.SellerStatus != SellerStatuses.Approved)
             return StatusCode(403, new { message = "บัญชีผู้ขายของคุณยังไม่ได้รับการอนุมัติจากแอดมิน" });
 
-        var settings = await lifecycle.GetSettingsAsync();
-
-        if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Condition) || string.IsNullOrWhiteSpace(req.Description))
-            return BadRequest(new { message = "กรุณากรอกชื่อสินค้า สภาพสินค้า และรายละเอียดให้ครบถ้วน" });
-        if (req.StartPrice <= 0)
-            return BadRequest(new { message = "ราคาเริ่มต้นต้องมากกว่า 0 บาท" });
-        if (req.MinIncrement < settings.GlobalMinBidIncrement)
-            return BadRequest(new { message = $"ขั้นต่ำการเสนอราคาต้องไม่น้อยกว่า ฿{settings.GlobalMinBidIncrement:N0} ตามกติกาฝ่ายการเงิน" });
+        var validationError = await ValidateListingPayloadAsync(req);
+        if (validationError is not null)
+            return BadRequest(new { message = validationError });
 
         var startUtc = req.StartAt.Kind == DateTimeKind.Utc ? req.StartAt : req.StartAt.ToUniversalTime();
         var endUtc = req.EndAt.Kind == DateTimeKind.Utc ? req.EndAt : req.EndAt.ToUniversalTime();
-        if (endUtc <= startUtc)
-            return BadRequest(new { message = "เวลาสิ้นสุดประมูลต้องอยู่หลังเวลาเริ่มประมูล" });
-        if (endUtc <= DateTime.UtcNow)
-            return BadRequest(new { message = "เวลาสิ้นสุดประมูลต้องอยู่ในอนาคต" });
-
-        var categoryExists = await Db.Categories.AnyAsync(c => c.Id == req.CategoryId && c.IsActive);
-        if (!categoryExists)
-            return BadRequest(new { message = "หมวดหมู่ที่เลือกไม่ถูกต้อง" });
-
         var imageUrl = string.IsNullOrWhiteSpace(req.ImageUrl)
             ? "https://images.unsplash.com/photo-1577083552431-6e5fd01aa342?auto=format&fit=crop&w=800&q=80"
             : req.ImageUrl.Trim();
@@ -214,6 +237,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
             StartAt = startUtc,
             EndAt = endUtc,
             Status = AuctionStatuses.Pending,
+            Version = 1,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -221,6 +245,65 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         await Db.SaveChangesAsync();
 
         return Ok(new { message = "ส่งสินค้าให้แอดมินตรวจสอบแล้ว", itemId = item.Id });
+    }
+
+    [HttpPut("listings/{id:int}")]
+    public async Task<IActionResult> UpdateListing(int id, [FromBody] ListingPayload req)
+    {
+        var user = await GetCurrentActiveUserAsync();
+        if (user is null) return Unauthorized();
+
+        var item = await Db.AuctionItems.FirstOrDefaultAsync(a => a.Id == id && a.SellerId == user.Id);
+        if (item is null) return NotFound(new { message = "ไม่พบสินค้าของคุณ" });
+
+        if (item.Status is not (AuctionStatuses.Pending or AuctionStatuses.Rejected))
+            return BadRequest(new { message = "แก้ไขได้เฉพาะสินค้าที่ยังรออนุมัติหรือถูกปฏิเสธเท่านั้น" });
+
+        var validationError = await ValidateListingPayloadAsync(req);
+        if (validationError is not null)
+            return BadRequest(new { message = validationError });
+
+        var startUtc = req.StartAt.Kind == DateTimeKind.Utc ? req.StartAt : req.StartAt.ToUniversalTime();
+        var endUtc = req.EndAt.Kind == DateTimeKind.Utc ? req.EndAt : req.EndAt.ToUniversalTime();
+
+        item.Name = req.Name.Trim();
+        item.CategoryId = req.CategoryId;
+        item.Condition = req.Condition.Trim();
+        item.Description = req.Description.Trim();
+        if (!string.IsNullOrWhiteSpace(req.ImageUrl))
+            item.ImageUrl = req.ImageUrl.Trim();
+        item.StartPrice = req.StartPrice;
+        item.CurrentPrice = req.StartPrice;
+        item.MinIncrement = req.MinIncrement;
+        item.StartAt = startUtc;
+        item.EndAt = endUtc;
+        item.Status = AuctionStatuses.Pending;
+        item.RejectReason = null;
+        item.Version++;
+
+        await Db.SaveChangesAsync();
+        return Ok(new { message = "บันทึกการแก้ไขสินค้าและส่งให้แอดมินตรวจสอบอีกครั้งแล้ว" });
+    }
+
+    [HttpDelete("listings/{id:int}")]
+    public async Task<IActionResult> DeleteListing(int id)
+    {
+        var user = await GetCurrentActiveUserAsync();
+        if (user is null) return Unauthorized();
+
+        var item = await Db.AuctionItems
+            .Include(a => a.Bids)
+            .FirstOrDefaultAsync(a => a.Id == id && a.SellerId == user.Id);
+        if (item is null) return NotFound(new { message = "ไม่พบสินค้าของคุณ" });
+
+        if (item.Status is not (AuctionStatuses.Pending or AuctionStatuses.Rejected))
+            return BadRequest(new { message = "ยกเลิกได้เฉพาะสินค้าที่ยังรออนุมัติหรือถูกปฏิเสธเท่านั้น" });
+        if (item.Bids.Count > 0)
+            return BadRequest(new { message = "ไม่สามารถยกเลิกสินค้าที่มีการเสนอราคาแล้ว" });
+
+        Db.AuctionItems.Remove(item);
+        await Db.SaveChangesAsync();
+        return Ok(new { message = $"ยกเลิกรายการสินค้า “{item.Name}” แล้ว" });
     }
 
     [HttpPost("orders/{orderId:int}/meetup")]
@@ -232,7 +315,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         var order = await Db.OrderPayments.FirstOrDefaultAsync(o => o.Id == orderId && o.SellerId == user.Id);
         if (order is null) return NotFound(new { message = "ไม่พบรายการคำสั่งซื้อ" });
         if (order.PaymentStatus != PaymentStatuses.Paid)
-            return BadRequest(new { message = "ต้องรอให้ผู้ประมูลชำระเงินก่อนจึงจะกำหนดนัดรับได้" });
+            return BadRequest(new { message = "ต้องรอให้ยืนยันการชำระเงินก่อนจึงจะกำหนดนัดรับได้" });
         if (string.IsNullOrWhiteSpace(req.Location))
             return BadRequest(new { message = "กรุณาระบุสถานที่นัดรับ" });
 
@@ -242,7 +325,6 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         if (order.MeetupStatus == MeetupStatuses.NotScheduled)
             order.MeetupStatus = MeetupStatuses.Scheduled;
 
-        // Post automatic meetup message in conversation if exists
         var conv = await Db.Conversations.FirstOrDefaultAsync(
             c => c.AuctionItemId == order.AuctionItemId && c.BuyerId == order.BuyerId && c.SellerId == order.SellerId);
         if (conv is not null)
@@ -278,7 +360,7 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
         order.DeliveredAt = DateTime.UtcNow;
         await Db.SaveChangesAsync();
 
-        return Ok(new { message = "ยืนยันส่งมอบสินค้าแล้ว รอผู้ซื้อยืนยันรับของและฝ่ายการเงินปล่อยเงิน" });
+        return Ok(new { message = "ยืนยันส่งมอบสินค้าแล้ว รอผู้ซื้อยืนยันรับของเพื่อให้ฝ่ายการเงินปล่อยเงิน" });
     }
 
     [HttpPost("orders/{orderId:int}/verify-payment")]
@@ -321,6 +403,10 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
                 IsRead = false,
                 CreatedAt = now
             });
+
+            await Db.SaveChangesAsync();
+            await lifecycle.RecalculateUnpaidOrdersAsync(order.BuyerId);
+            return Ok(new { message = $"ยืนยันได้รับเงินตรงสำหรับ {order.OrderCode} แล้ว" });
         }
         else
         {
@@ -341,9 +427,33 @@ public class SellerController(AppDbContext db, AuctionLifecycleService lifecycle
                 IsRead = false,
                 CreatedAt = now
             });
-        }
 
-        await Db.SaveChangesAsync();
-        return Ok(new { message = req.Approve ? $"ยืนยันได้รับเงินตรงสำหรับ {order.OrderCode} แล้ว" : $"ปฏิเสธการแจ้งชำระเงิน {order.OrderCode} แล้ว" });
+            await Db.SaveChangesAsync();
+            return Ok(new { message = $"ปฏิเสธการแจ้งชำระเงิน {order.OrderCode} แล้ว" });
+        }
+    }
+
+    private async Task<string?> ValidateListingPayloadAsync(ListingPayload req)
+    {
+        var settings = await lifecycle.GetSettingsAsync();
+        if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Condition) || string.IsNullOrWhiteSpace(req.Description))
+            return "กรุณากรอกชื่อสินค้า สภาพสินค้า และรายละเอียดให้ครบถ้วน";
+        if (req.StartPrice <= 0)
+            return "ราคาเริ่มต้นต้องมากกว่า 0 บาท";
+        if (req.MinIncrement < settings.GlobalMinBidIncrement)
+            return $"ขั้นต่ำการเสนอราคาต้องไม่น้อยกว่า ฿{settings.GlobalMinBidIncrement:N0} ตามกติกาฝ่ายการเงิน";
+
+        var startUtc = req.StartAt.Kind == DateTimeKind.Utc ? req.StartAt : req.StartAt.ToUniversalTime();
+        var endUtc = req.EndAt.Kind == DateTimeKind.Utc ? req.EndAt : req.EndAt.ToUniversalTime();
+        if (endUtc <= startUtc)
+            return "เวลาสิ้นสุดประมูลต้องอยู่หลังเวลาเริ่มประมูล";
+        if (endUtc <= DateTime.UtcNow)
+            return "เวลาสิ้นสุดประมูลต้องอยู่ในอนาคต";
+
+        var categoryExists = await Db.Categories.AnyAsync(c => c.Id == req.CategoryId && c.IsActive);
+        if (!categoryExists)
+            return "หมวดหมู่ที่เลือกไม่ถูกต้อง";
+
+        return null;
     }
 }

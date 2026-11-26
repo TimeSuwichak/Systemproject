@@ -256,7 +256,19 @@
                             <label class="field-label">สภาพสินค้า <span>*</span><select name="condition" required><option value="">เลือกสภาพ</option><option>ดีมาก — เก็บสะสม</option><option>ดี — มีร่องรอยตามอายุ</option><option>ผ่านการใช้งาน</option></select></label>
                         </div>
                         <label class="field-label">รายละเอียดและประวัติ <span>*</span><textarea name="description" rows="4" required placeholder="ที่มา อายุโดยประมาณ วัสดุ และตำหนิ (ถ้ามี)"></textarea></label>
-                        <label class="field-label">ลิงก์รูปภาพสินค้า <input name="imageUrl" type="url" placeholder="https://example.com/image.jpg"><small class="field-hint">เว้นว่างได้ ระบบจะใช้ภาพเริ่มต้นให้</small></label>
+                        <div class="field-row">
+                            <label class="field-label">อัปโหลดรูปสินค้าจากเครื่อง
+                                <input type="file" id="listingImageFile" accept=".jpg,.jpeg,.png,.webp,image/*">
+                                <small class="field-hint">รองรับ .jpg/.png/.webp ไม่เกิน 5 MB</small>
+                            </label>
+                            <label class="field-label">หรือวางลิงก์รูปภาพสินค้า
+                                <input name="imageUrl" id="listingImageUrlInput" type="text" placeholder="https://... หรืออัปโหลดด้านซ้าย">
+                                <small class="field-hint">เว้นว่างได้ ระบบจะใช้ภาพเริ่มต้นให้</small>
+                            </label>
+                        </div>
+                        <div class="slip-preview-wrap hidden" id="listingImagePreviewWrap" style="margin-bottom:12px;">
+                            <img id="listingImagePreview" class="slip-preview-img" alt="ตัวอย่างรูปสินค้า">
+                        </div>
                     </div>
                     <div class="form-card">
                         <div class="form-card-heading"><span class="form-step">02</span><div><h2>ตั้งค่าการประมูล</h2><p>กำหนดราคาเริ่มต้น ขั้นต่ำ และช่วงเวลาที่เปิดประมูล</p></div></div>
@@ -485,6 +497,28 @@
             </div>
         </section>
 
+        <!-- ==================== ADMIN & FINANCE: AUDIT LOGS ==================== -->
+        <section class="view-panel" id="view-audit-logs">
+            <div class="page-heading">
+                <div>
+                    <p class="eyebrow"><span class="eyebrow-line"></span> SYSTEM AUDIT TRAIL</p>
+                    <h1>บันทึกประวัติการทำงาน (Audit Log)</h1>
+                    <p class="intro">ตรวจสอบประวัติการอนุมัติ ปฏิเสธ ระงับบัญชี ตรวจสลิป ปล่อยเงิน คืนเงิน และแก้กติกาทั้งหมด</p>
+                </div>
+                <div class="sort-controls">
+                    <button class="sort-button active" type="button" data-audit-filter="all">ทั้งหมด</button>
+                    <button class="sort-button" type="button" data-audit-filter="Admin">Admin</button>
+                    <button class="sort-button" type="button" data-audit-filter="Finance">Finance</button>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead><tr><th>วันเวลา</th><th>ผู้ดำเนินการ</th><th>บทบาท</th><th>การกระทำ</th><th>เป้าหมาย</th><th>รายละเอียด</th></tr></thead>
+                    <tbody id="auditLogRows"><tr class="empty-row"><td colspan="6">ยังไม่มีประวัติการทำงาน</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+
         <footer class="page-footer">
             <span>© 2569 ของเก่าเล่าเรื่อง</span>
             <span>ระบบประมูลของสะสมครบวงจร · SQLite + ASP.NET Core</span>
@@ -516,8 +550,34 @@
                 <label class="field-label">รหัสผ่าน <span>*</span><input name="password" type="password" required placeholder="••••••"></label>
                 <button class="button button-primary full-width" type="submit">เข้าสู่ระบบ</button>
             </form>
-            <div class="demo-divider"><span>หรือทดลองเข้าสู่ระบบด่วน (รหัสผ่าน 123456)</span></div>
-            <div class="demo-accounts-grid" id="demoAccountsGrid"></div>
+            <div style="text-align:right;margin-top:8px;">
+                <button type="button" class="text-button" data-auth-tab="forgot">ลืมรหัสผ่าน?</button>
+            </div>
+            <div id="demoAccountsSection">
+                <div class="demo-divider"><span>หรือทดลองเข้าสู่ระบบด่วน (Development เท่านั้น · รหัสผ่าน 123456)</span></div>
+                <div class="demo-accounts-grid" id="demoAccountsGrid"></div>
+            </div>
+        </div>
+
+        <div id="authTabForgot" class="hidden">
+            <h2 class="auth-title">ลืมรหัสผ่าน / ตั้งรหัสผ่านใหม่</h2>
+            <p class="auth-subtitle">กรอกอีเมลเพื่อรับรหัสรีเซ็ต 6 หลัก (ใช้งานได้ภายใน 15 นาที)</p>
+            <form id="forgotPasswordForm" class="auth-form">
+                <label class="field-label">อีเมลบัญชีของคุณ <span>*</span><input name="email" type="email" required placeholder="name@example.com"></label>
+                <button class="button button-secondary full-width" type="submit">ขอรหัสรีเซ็ต 6 หลัก</button>
+            </form>
+            <div id="forgotDevNotice" class="info-banner hidden" style="margin-top:12px;"></div>
+            <form id="resetPasswordForm" class="auth-form" style="margin-top:14px;">
+                <label class="field-label">อีเมล <span>*</span><input name="email" type="email" required placeholder="name@example.com"></label>
+                <div class="field-row">
+                    <label class="field-label">รหัสรีเซ็ต 6 หลัก <span>*</span><input name="resetToken" required maxlength="10" placeholder="123456"></label>
+                    <label class="field-label">รหัสผ่านใหม่ (6+ ตัว) <span>*</span><input name="newPassword" type="password" minlength="6" required></label>
+                </div>
+                <button class="button button-primary full-width" type="submit">ยืนยันตั้งรหัสผ่านใหม่</button>
+            </form>
+            <div style="text-align:center;margin-top:10px;">
+                <button type="button" class="text-button" data-auth-tab="login">← กลับไปหน้าเข้าสู่ระบบ</button>
+            </div>
         </div>
 
         <div id="authTabRegister" class="hidden">

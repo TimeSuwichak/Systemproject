@@ -38,6 +38,7 @@ public static class PaymentStatuses
     public const string PendingVerification = "PendingVerification";
     public const string Paid = "Paid";
     public const string Refunded = "Refunded";
+    public const string Cancelled = "Cancelled";
 }
 
 public static class MeetupStatuses
@@ -54,6 +55,7 @@ public static class PayoutStatuses
     public const string Released = "Released";
     public const string DirectSettled = "DirectSettled";
     public const string Refunded = "Refunded";
+    public const string Cancelled = "Cancelled";
 }
 
 public static class DisputeStatuses
@@ -102,6 +104,11 @@ public class User
     public string? SellerRejectReason { get; set; }
 
     public DateTime? SellerAppliedAt { get; set; }
+    public int FailedLoginCount { get; set; }
+    public DateTime? LockoutEndAt { get; set; }
+    [MaxLength(20)]
+    public string? PasswordResetToken { get; set; }
+    public DateTime? PasswordResetExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -159,6 +166,9 @@ public class AuctionItem
 
     public int? WinnerId { get; set; }
     public User? Winner { get; set; }
+
+    [ConcurrencyCheck]
+    public int Version { get; set; } = 1;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -230,6 +240,7 @@ public class OrderPayment
     public DateTime? PaymentSubmittedAt { get; set; }
     [MaxLength(300)]
     public string? PaymentRejectReason { get; set; }
+    public DateTime? PaymentDueAt { get; set; }
     public DateTime? PaidAt { get; set; }
 
     [Required, MaxLength(20)]
@@ -354,4 +365,31 @@ public class FinanceSettings
     [MaxLength(120)]
     public string PlatformAccountName { get; set; } = "บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)";
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class AuditLog
+{
+    public int Id { get; set; }
+
+    public int ActorId { get; set; }
+    public User? Actor { get; set; }
+
+    [Required, MaxLength(80)]
+    public string ActorName { get; set; } = string.Empty;
+
+    [Required, MaxLength(20)]
+    public string ActorRole { get; set; } = string.Empty;
+
+    [Required, MaxLength(60)]
+    public string Action { get; set; } = string.Empty;
+
+    [Required, MaxLength(40)]
+    public string TargetType { get; set; } = string.Empty;
+
+    public int? TargetId { get; set; }
+
+    [Required, MaxLength(600)]
+    public string Details { get; set; } = string.Empty;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

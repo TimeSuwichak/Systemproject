@@ -24,9 +24,7 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
     {
-        await lifecycle.CloseExpiredAuctionsAsync();
-        await lifecycle.RecalculateUnpaidOrdersAsync();
-
+        var now = DateTime.UtcNow;
         var settings = await lifecycle.GetSettingsAsync();
         var orders = await Db.OrderPayments
             .Include(o => o.AuctionItem)!.ThenInclude(a => a!.Category)
@@ -73,6 +71,20 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
             {
                 disputesByOrder.TryGetValue(o.Id, out var disp);
                 var isEscrow = o.PaymentMethod == PaymentMethods.PlatformEscrow;
+                var hasOpenDispute = disp?.HasOpen ?? false;
+                var canRelease = AuctionLifecycleService.CanReleaseEscrow(o, hasOpenDispute, now);
+
+                string? releaseBlockedReason = null;
+                if (isEscrow && o.PaymentStatus == PaymentStatuses.Paid && o.PayoutStatus == PayoutStatuses.Pending && !canRelease)
+                {
+                    if (hasOpenDispute)
+                        releaseBlockedReason = "ระงับการปล่อยเงินชั่วคราว (มีข้อพิพาทเปิดอยู่)";
+                    else if (o.MeetupStatus == MeetupStatuses.Delivered)
+                        releaseBlockedReason = $"รอผู้ซื้อยืนยันรับของ (หรือครบ {AuctionLifecycleService.AutoReleaseAfterDeliveredDays} วันหลังส่งมอบ)";
+                    else
+                        releaseBlockedReason = "รอผู้ขายส่งมอบและผู้ซื้อยืนยันรับของ";
+                }
+
                 return new
                 {
                     o.Id,
@@ -98,6 +110,7 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                     o.PaymentSlipUrl,
                     o.PaymentNote,
                     o.PaymentSubmittedAt,
+                    o.PaymentDueAt,
                     o.PaidAt,
                     o.MeetupStatus,
                     o.MeetupLocation,
@@ -108,13 +121,11 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                     o.PayoutReleasedAt,
                     o.RefundedAt,
                     o.FinanceNote,
-                    hasOpenDispute = disp?.HasOpen ?? false,
+                    hasOpenDispute,
                     disputeStatus = disp?.LatestStatus,
+                    releaseBlockedReason,
                     canVerifyEscrowPayment = isEscrow && o.PaymentStatus == PaymentStatuses.PendingVerification,
-                    canRelease = isEscrow
-                        && o.PaymentStatus == PaymentStatuses.Paid
-                        && o.PayoutStatus == PayoutStatuses.Pending
-                        && (o.MeetupStatus == MeetupStatuses.Completed || o.MeetupStatus == MeetupStatuses.Delivered),
+                    canRelease,
                     canRefund = isEscrow
                         && o.PaymentStatus == PaymentStatuses.Paid
                         && o.PayoutStatus == PayoutStatuses.Pending,
@@ -127,6 +138,9 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
     [HttpPost("orders/{orderId:int}/verify-payment")]
     public async Task<IActionResult> VerifyEscrowPayment(int orderId, [FromBody] VerifyEscrowPaymentRequest req)
     {
+        var actor = await GetCurrentActiveUserAsync();
+        if (actor is null) return Unauthorized();
+
         var order = await Db.OrderPayments
             .Include(o => o.AuctionItem)
             .FirstOrDefaultAsync(o => o.Id == orderId);
@@ -166,6 +180,11 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                 IsRead = false,
                 CreatedAt = now
             });
+
+            AddAuditLog(actor, "VerifyEscrowSlip", "OrderPayment", order.Id, $"ยืนยันสลิป {order.OrderCode} ยอด ฿{order.FinalBuyerAmount:N2}");
+            await Db.SaveChangesAsync();
+            await lifecycle.RecalculateUnpaidOrdersAsync(order.BuyerId);
+            return Ok(new { message = $"ยืนยันรับชำระเงิน {order.OrderCode} แล้ว" });
         }
         else
         {
@@ -186,15 +205,19 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
                 IsRead = false,
                 CreatedAt = now
             });
-        }
 
-        await Db.SaveChangesAsync();
-        return Ok(new { message = req.Approve ? $"ยืนยันรับชำระเงิน {order.OrderCode} แล้ว" : $"ปฏิเสธสลิป {order.OrderCode} พร้อมส่งเหตุผลให้ผู้ซื้อแล้ว" });
+            AddAuditLog(actor, "RejectEscrowSlip", "OrderPayment", order.Id, $"ปฏิเสธสลิป {order.OrderCode}: {order.PaymentRejectReason}");
+            await Db.SaveChangesAsync();
+            return Ok(new { message = $"ปฏิเสธสลิป {order.OrderCode} พร้อมส่งเหตุผลให้ผู้ซื้อแล้ว" });
+        }
     }
 
     [HttpPost("orders/{orderId:int}/release")]
     public async Task<IActionResult> ReleasePayout(int orderId, [FromBody] FinanceActionRequest? req)
     {
+        var actor = await GetCurrentActiveUserAsync();
+        if (actor is null) return Unauthorized();
+
         var order = await Db.OrderPayments
             .Include(o => o.AuctionItem)
             .FirstOrDefaultAsync(o => o.Id == orderId);
@@ -206,10 +229,15 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
             return BadRequest(new { message = "ไม่สามารถปล่อยเงินได้ เนื่องจากรายการนี้ยังไม่ยืนยันการชำระเงินหรือถูกคืนเงินแล้ว" });
         if (order.PayoutStatus != PayoutStatuses.Pending)
             return BadRequest(new { message = "รายการนี้ดำเนินการด้านการเงินไปแล้ว" });
-        if (order.MeetupStatus != MeetupStatuses.Completed && order.MeetupStatus != MeetupStatuses.Delivered)
-            return BadRequest(new { message = "ต้องรอให้มีการยืนยันส่งมอบ/รับของก่อนจึงจะปล่อยเงินให้ผู้ขายได้" });
+
+        var hasOpenDispute = await Db.Disputes.AnyAsync(d => d.OrderPaymentId == order.Id && d.Status != DisputeStatuses.Resolved);
+        if (hasOpenDispute)
+            return BadRequest(new { message = "ไม่สามารถปล่อยเงินได้ เนื่องจากรายการนี้มีข้อพิพาทที่ยังไม่ได้รับการแก้ไข" });
 
         var now = DateTime.UtcNow;
+        if (!AuctionLifecycleService.CanReleaseEscrow(order, false, now))
+            return BadRequest(new { message = $"ต้องรอให้ผู้ซื้อยืนยันรับสินค้าแล้ว (Completed) หรือครบ {AuctionLifecycleService.AutoReleaseAfterDeliveredDays} วันหลังผู้ขายส่งมอบก่อนจึงจะปล่อยเงินได้" });
+
         order.PayoutStatus = PayoutStatuses.Released;
         order.PayoutReleasedAt = now;
         order.FinanceNote = string.IsNullOrWhiteSpace(req?.Note)
@@ -228,6 +256,7 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
             CreatedAt = now
         });
 
+        AddAuditLog(actor, "ReleasePayout", "OrderPayment", order.Id, $"ปล่อยเงิน {order.OrderCode} ยอดสุทธิ ฿{order.SellerNetAmount:N2} ({order.FinanceNote})");
         await Db.SaveChangesAsync();
         return Ok(new { message = $"ปล่อยเงิน ฿{order.SellerNetAmount:N2} ให้ผู้ขาย ({order.OrderCode}) เรียบร้อยแล้ว" });
     }
@@ -235,6 +264,9 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
     [HttpPost("orders/{orderId:int}/refund")]
     public async Task<IActionResult> RefundOrder(int orderId, [FromBody] FinanceActionRequest? req)
     {
+        var actor = await GetCurrentActiveUserAsync();
+        if (actor is null) return Unauthorized();
+
         var order = await Db.OrderPayments
             .Include(o => o.AuctionItem)
             .FirstOrDefaultAsync(o => o.Id == orderId);
@@ -267,6 +299,7 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
             CreatedAt = now
         });
 
+        AddAuditLog(actor, "RefundOrder", "OrderPayment", order.Id, $"คืนเงิน {order.OrderCode} ยอด ฿{order.FinalBuyerAmount:N2} ({order.FinanceNote})");
         await Db.SaveChangesAsync();
         return Ok(new { message = $"คืนเงิน ฿{order.FinalBuyerAmount:N2} ให้ผู้ซื้อ ({order.OrderCode}) เรียบร้อยแล้ว" });
     }
@@ -274,6 +307,9 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
     [HttpPut("settings")]
     public async Task<IActionResult> UpdateSettings([FromBody] UpdateSettingsRequest req)
     {
+        var actor = await GetCurrentActiveUserAsync();
+        if (actor is null) return Unauthorized();
+
         if (req.SameCategoryDiscountPercent < 0 || req.SameCategoryDiscountPercent > 50)
             return BadRequest(new { message = "ส่วนลดหมวดเดียวกันต้องอยู่ระหว่าง 0% – 50%" });
         if (req.PlatformFeePercent < 0 || req.PlatformFeePercent > 30)
@@ -291,6 +327,8 @@ public class FinanceController(AppDbContext db, AuctionLifecycleService lifecycl
             settings.PlatformAccountName = req.PlatformAccountName.Trim();
         settings.UpdatedAt = DateTime.UtcNow;
 
+        AddAuditLog(actor, "UpdateFinanceSettings", "FinanceSettings", 1,
+            $"ส่วนลดหมวด={settings.SameCategoryDiscountPercent}%, ค่าธรรมเนียม={settings.PlatformFeePercent}%, ขั้นต่ำ=฿{settings.GlobalMinBidIncrement:N0}");
         await Db.SaveChangesAsync();
         await lifecycle.RecalculateUnpaidOrdersAsync();
 

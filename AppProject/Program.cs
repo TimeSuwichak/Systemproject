@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using AppProject.Data;
 using AppProject.Services;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -16,6 +17,27 @@ builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite(connect
 
 builder.Services.AddScoped<AuctionLifecycleService>();
 builder.Services.AddHostedService<AuctionClosingBackgroundService>();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, ct) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json; charset=utf-8";
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { message = "คุณพยายามทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองใหม่" }, ct);
+    };
+    options.AddPolicy("login", httpContext =>
+    {
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(ip, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0
+        });
+    });
+});
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -62,13 +84,15 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-var uploadsDir = Path.Combine(app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot"), "uploads", "slips");
-Directory.CreateDirectory(uploadsDir);
+var webRoot = app.Environment.WebRootPath ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+Directory.CreateDirectory(Path.Combine(webRoot, "uploads", "slips"));
+Directory.CreateDirectory(Path.Combine(webRoot, "uploads", "products"));
 
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
 
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 

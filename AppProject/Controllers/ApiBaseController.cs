@@ -35,6 +35,21 @@ public abstract class ApiBaseController(AppDbContext db) : ControllerBase
         return user;
     }
 
+    protected void AddAuditLog(User actor, string action, string targetType, int? targetId, string details)
+    {
+        Db.AuditLogs.Add(new AuditLog
+        {
+            ActorId = actor.Id,
+            ActorName = actor.DisplayName,
+            ActorRole = actor.Role,
+            Action = action,
+            TargetType = targetType,
+            TargetId = targetId,
+            Details = details.Length > 600 ? details[..600] : details,
+            CreatedAt = DateTime.UtcNow
+        });
+    }
+
     protected static object MapUserSummary(User u) => new
     {
         u.Id,

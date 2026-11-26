@@ -103,13 +103,23 @@ public class NotificationsController(AppDbContext db) : ApiBaseController(db)
             if (pendingEscrowSlips > 0)
                 roleAlerts.Add(new { view = "finance-payments", title = $"มีสลิป QR ระบบกลางรอตรวจ {pendingEscrowSlips} รายการ", body = "คลิกเพื่อตรวจสลิปและยืนยันรับชำระเงิน" });
 
-            var readyToRelease = await Db.OrderPayments.CountAsync(o =>
-                o.PaymentMethod == PaymentMethods.PlatformEscrow
-                && o.PaymentStatus == PaymentStatuses.Paid
-                && o.PayoutStatus == PayoutStatuses.Pending
-                && (o.MeetupStatus == MeetupStatuses.Completed || o.MeetupStatus == MeetupStatuses.Delivered));
+            var openDisputeOrderIds = (await Db.Disputes
+                .Where(d => d.OrderPaymentId != null && d.Status != DisputeStatuses.Resolved)
+                .Select(d => d.OrderPaymentId!.Value)
+                .Distinct()
+                .ToListAsync()).ToHashSet();
+
+            var escrowPending = await Db.OrderPayments
+                .Where(o => o.PaymentMethod == PaymentMethods.PlatformEscrow
+                    && o.PaymentStatus == PaymentStatuses.Paid
+                    && o.PayoutStatus == PayoutStatuses.Pending)
+                .ToListAsync();
+
+            var nowUtc = DateTime.UtcNow;
+            var readyToRelease = escrowPending.Count(o =>
+                AppProject.Services.AuctionLifecycleService.CanReleaseEscrow(o, openDisputeOrderIds.Contains(o.Id), nowUtc));
             if (readyToRelease > 0)
-                roleAlerts.Add(new { view = "finance-payments", title = $"พร้อมปล่อยเงินให้ผู้ขาย {readyToRelease} รายการ", body = "ยืนยันส่งมอบ/รับของแล้ว คลิกเพื่อตรวจสอบ" });
+                roleAlerts.Add(new { view = "finance-payments", title = $"พร้อมปล่อยเงินให้ผู้ขาย {readyToRelease} รายการ", body = "ผู้ซื้อยืนยันรับของแล้ว คลิกเพื่อปล่อยเงิน" });
         }
 
         var totalBadgeCount = Math.Max(unreadNotifCount, unreadMessagesCount) + (user.Role is Roles.Admin or Roles.Finance && unreadNotifCount == 0 ? roleAlerts.Count : 0);

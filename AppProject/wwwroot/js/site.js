@@ -23,7 +23,8 @@
     "admin-winners": "ประวัติผู้ชนะ (อ่านอย่างเดียว)",
     "finance-payments": "จัดการชำระเงิน / ปล่อยเงิน / คืนเงิน",
     "finance-rules": "กติกาส่วนลด & ค่าธรรมเนียม",
-    "finance-report": "ประวัติผู้ชนะ & รายงานยอดขาย"
+    "finance-report": "ประวัติผู้ชนะ & รายงานยอดขาย",
+    "audit-logs": "บันทึกประวัติการทำงาน (Audit Log)"
   };
 
   let currentUser = null;
@@ -172,6 +173,7 @@
       case "PendingVerification":
         return statusPill("blue", method === "DirectToSeller" ? "รอผู้ขายยืนยันรับเงิน" : "รอฝ่ายการเงินตรวจสลิป");
       case "Refunded": return statusPill("red", "คืนเงินแล้ว");
+      case "Cancelled": return statusPill("muted", "หมดเวลาชำระเงิน / ยกเลิก");
       default: return statusPill("pending", "รอชำระเงิน");
     }
   }
@@ -181,6 +183,7 @@
       case "Released": return statusPill("green", "ปล่อยเงินให้ผู้ขายแล้ว");
       case "DirectSettled": return statusPill("blue", "ผู้ขายรับเงินตรงแล้ว");
       case "Refunded": return statusPill("red", "คืนเงินผู้ซื้อแล้ว");
+      case "Cancelled": return statusPill("muted", "ยกเลิกแล้ว");
       default: return statusPill("pending", "รอปล่อยเงิน");
     }
   }
@@ -387,8 +390,15 @@
         items: [
           { view: "sell", icon: "＋", label: "ลงขาย & สินค้าของฉัน" },
           { view: "seller-orders", icon: "▣", label: "นัดรับ & ยอดขาย" },
-          { view: "messages", icon: "▤", label: "กล่องข้อความ" },
-          { view: "today", icon: "⌂", label: "ดูตลาดประมูลวันนี้" }
+          { view: "messages", icon: "▤", label: "กล่องข้อความ" }
+        ]
+      });
+      sections.push({
+        title: "ประมูลซื้อของสะสม",
+        items: [
+          { view: "today", icon: "⌂", label: "ตลาดประมูลวันนี้" },
+          { view: "mybids", icon: "♡", label: "รายการที่สนใจ & ประวัติบิด" },
+          { view: "payments", icon: "฿", label: "ชำระเงิน & นัดรับ (ฝั่งผู้ซื้อ)" }
         ]
       });
     } else if (role === "Admin") {
@@ -400,6 +410,7 @@
           { view: "admin-categories", icon: "✦", label: "จัดการหมวดหมู่สินค้า" },
           { view: "admin-disputes", icon: "⚑", label: "รับเรื่องข้อพิพาท" },
           { view: "admin-winners", icon: "▦", label: "ประวัติผู้ชนะ (อ่านอย่างเดียว)" },
+          { view: "audit-logs", icon: "☰", label: "บันทึกการทำงาน (Audit Log)" },
           { view: "today", icon: "⌂", label: "ดูหน้าร้านประมูล" }
         ]
       });
@@ -410,6 +421,7 @@
           { view: "finance-payments", icon: "฿", label: "ชำระเงิน / ปล่อยเงิน / คืนเงิน" },
           { view: "finance-rules", icon: "⚙", label: "ตั้งกติกาส่วนลด & ค่าธรรมเนียม" },
           { view: "finance-report", icon: "▤", label: "ประวัติผู้ชนะ & รายงานยอดขาย" },
+          { view: "audit-logs", icon: "☰", label: "บันทึกการทำงาน (Audit Log)" },
           { view: "today", icon: "⌂", label: "ดูหน้าร้านประมูล" }
         ]
       });
@@ -443,6 +455,7 @@
       `;
       topbarUser.innerHTML = `
         <span class="role-badge role-${escapeHtml(currentUser.role)}">${escapeHtml(roleLabel)}</span>
+        <button class="button button-secondary button-sm" type="button" data-open-change-pw="1">เปลี่ยนรหัสผ่าน</button>
         <button class="button button-secondary button-sm" type="button" data-open-auth="1">สลับบัญชี</button>
         <button class="button button-danger button-sm" type="button" id="logoutBtn">ออกจากระบบ</button>
       `;
@@ -479,6 +492,7 @@
       else if (view === "sell" || view === "seller-orders") await loadSellerDashboard();
       else if (view.startsWith("admin-")) await loadAdminDashboard();
       else if (view.startsWith("finance-")) await loadFinanceDashboard();
+      else if (view === "audit-logs") await loadAuditLogs();
     } catch (err) {
       showToast(err.message, true);
     }
@@ -489,9 +503,14 @@
     document.querySelectorAll(".auth-tab").forEach(t => t.classList.toggle("active", t.dataset.authTab === tab));
     document.getElementById("authTabLogin").classList.toggle("hidden", tab !== "login");
     document.getElementById("authTabRegister").classList.toggle("hidden", tab !== "register");
+    document.getElementById("authTabForgot")?.classList.toggle("hidden", tab !== "forgot");
 
+    const demoSection = document.getElementById("demoAccountsSection");
     if (demoAccountsCache.length === 0) {
-      try { demoAccountsCache = await api("/api/auth/demo-accounts"); } catch {}
+      try { demoAccountsCache = await api("/api/auth/demo-accounts"); } catch { demoAccountsCache = []; }
+    }
+    if (demoSection) {
+      demoSection.classList.toggle("hidden", demoAccountsCache.length === 0);
     }
     document.getElementById("demoAccountsGrid").innerHTML = demoAccountsCache.map(acc => `
       <button type="button" class="demo-card" data-demo-email="${escapeHtml(acc.email)}">
@@ -502,6 +521,21 @@
     `).join("");
 
     openDialogSafe(authDialog);
+  }
+
+  async function loadAuditLogs(roleFilter = "all") {
+    const logs = await api(`/api/audit-logs?role=${encodeURIComponent(roleFilter)}`);
+    document.getElementById("auditLogRows").innerHTML = logs.length
+      ? logs.map(l => `
+        <tr>
+          <td style="white-space:nowrap;">${formatDateTime(l.createdAt)}</td>
+          <td><strong>${escapeHtml(l.actorName)}</strong></td>
+          <td><span class="role-badge role-${escapeHtml(l.actorRole)}">${escapeHtml(roleLabels[l.actorRole] || l.actorRole)}</span></td>
+          <td><code>${escapeHtml(l.action)}</code></td>
+          <td>${escapeHtml(l.targetType)}${l.targetId ? ` #${l.targetId}` : ""}</td>
+          <td>${escapeHtml(l.details)}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="6">ยังไม่มีประวัติการทำงาน</td></tr>`;
   }
 
   async function refreshSession(goDefaultView = false) {
@@ -699,24 +733,27 @@
 
       let bidControlHtml = "";
       const isExpiredNow = p.isClosed || parseUtcDate(p.endAt).getTime() <= Date.now();
+      const canBidRole = currentUser && (currentUser.role === "Buyer" || currentUser.role === "Seller");
       if (isExpiredNow) {
         bidControlHtml = `<div class="info-banner">รายการนี้ปิดประมูลแล้ว</div>`;
       } else if (!p.hasStarted) {
         bidControlHtml = `<div class="info-banner">เริ่มเปิดประมูลวันที่ ${formatDateTime(p.startAt)}</div>`;
       } else if (!currentUser) {
-        bidControlHtml = `<button class="button button-primary full-width" type="button" data-open-auth="1">เข้าสู่ระบบในฐานะผู้ประมูลเพื่อเสนอราคา</button>`;
-      } else if (currentUser.role !== "Buyer") {
-        bidControlHtml = `<div class="info-banner">บัญชีปัจจุบัน (${escapeHtml(roleLabels[currentUser.role])}) สามารถดูรายละเอียดได้เท่านั้น — สลับเป็นบทบาท "ผู้ประมูล" เพื่อเสนอราคา</div>`;
+        bidControlHtml = `<button class="button button-primary full-width" type="button" data-open-auth="1">เข้าสู่ระบบเพื่อเสนอราคา</button>`;
+      } else if (!canBidRole) {
+        bidControlHtml = `<div class="info-banner">บัญชีปัจจุบัน (${escapeHtml(roleLabels[currentUser.role])}) สามารถดูรายละเอียดได้เท่านั้น</div>`;
+      } else if (currentUser.id === p.sellerId) {
+        bidControlHtml = `<div class="info-banner">นี่คือสินค้าของคุณ ไม่สามารถเสนอราคาสินค้าตัวเองได้</div>`;
       } else {
         bidControlHtml = `
           <form class="dialog-bid-form" id="bidForm" data-end-at="${escapeHtml(p.endAt)}">
             <input name="bid" type="number" step="1" min="${p.minNextBid}" value="${p.minNextBid}" required>
             <button type="submit">ยืนยันเสนอราคา</button>
           </form>
-          <p class="dialog-minimum">เสนอขั้นต่ำ ${money(p.minNextBid)} (เพิ่มครั้งละ ≥ ${money(p.minIncrement)}) · เหลือเวลา <strong data-end-at="${escapeHtml(p.endAt)}">${remainingText(p.endAt)}</strong></p>`;
+          <p class="dialog-minimum">เสนอขั้นต่ำ ${money(p.minNextBid)} (เพิ่มครั้งละ ≥ ${money(p.minIncrement)}) · เหลือเวลา <strong data-end-at="${escapeHtml(p.endAt)}">${remainingText(p.endAt)}</strong> · ต่อเวลาอัตโนมัติ 2 นาทีหากบิดช่วงท้าย</p>`;
       }
 
-      const chatBtnHtml = currentUser && currentUser.role === "Buyer" && currentUser.id !== p.sellerId
+      const chatBtnHtml = canBidRole && currentUser.id !== p.sellerId
         ? `<button class="button button-secondary button-sm" type="button" data-start-chat="${p.id}">▤ แชทกับผู้ขาย</button>`
         : "";
 
@@ -794,7 +831,8 @@
           <div class="payment-info">
             <small>${escapeHtml(o.orderCode)} · ${escapeHtml(o.categoryName)} · ผู้ขาย ${escapeHtml(o.sellerName)}</small>
             <h3>${escapeHtml(o.itemName)}</h3>
-            <p>${o.discountAmount > 0 ? `<strong style="color:#966222;">✦ ${escapeHtml(o.discountReason)} (-${money(o.discountAmount)})</strong>` : "ไม่มีส่วนลดหมวดเดียวกัน (ซื้อชิ้นต่อไปในหมวดนี้เพื่อรับส่วนลด)"}</p>
+            <p>${o.discountAmount > 0 ? `<strong style="color:#966222;">✦ ${escapeHtml(o.discountReason)} (-${money(o.discountAmount)})</strong>` : "ไม่มีส่วนลดหมวดเดียวกัน (ชำระชิ้นนี้แล้วรับส่วนลดในชิ้นต่อไปหมวดเดียวกัน)"}</p>
+            ${o.paymentDueAt ? `<p style="color:var(--rose);margin-top:3px;"><strong>กำหนดชำระภายใน:</strong> ${formatDateTime(o.paymentDueAt)}</p>` : ""}
             ${o.paymentRejectReason ? `<p style="color:var(--rose);margin-top:4px;"><strong>ถูกปฏิเสธครั้งก่อน:</strong> ${escapeHtml(o.paymentRejectReason)}</p>` : ""}
           </div>
           <div class="payment-pricing">
@@ -930,9 +968,12 @@
             ${item.winnerName ? `<small class="table-subline">ผู้ชนะ: ${escapeHtml(item.winnerName)}</small>` : ""}
           </td>
           <td>
-            <button class="button button-secondary button-sm" type="button" data-view-seller-bids="${item.id}">
-              ดูประวัติเสนอราคา (${item.bidCount})
-            </button>
+            <div class="table-actions">
+              <button class="button button-secondary button-sm" type="button" data-view-seller-bids="${item.id}">
+                ประวัติบิด (${item.bidCount})
+              </button>
+              ${item.canEditOrCancel ? `<button class="button button-secondary button-sm" type="button" data-edit-listing="${item.id}">แก้ไข</button><button class="button button-danger button-sm" type="button" data-delete-listing="${item.id}" data-name="${escapeHtml(item.name)}">ยกเลิก</button>` : ""}
+            </div>
           </td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="5">ยังไม่มีสินค้าที่ลงขาย</td></tr>`;
@@ -1243,6 +1284,7 @@
               ${o.canRefund ? `<button class="button button-danger button-sm" type="button" data-finance-refund="${o.id}" data-code="${escapeHtml(o.orderCode)}" data-amt="${o.finalBuyerAmount}">คืนเงินผู้ซื้อ</button>` : ""}
               ${!o.canVerifyEscrowPayment && !o.canRelease && !o.canRefund && o.payoutStatus === "Pending"
                 ? `<small style="color:var(--muted);">${o.paymentStatus === "Unpaid" ? "รอผู้ซื้อชำระเงิน" : o.paymentStatus === "PendingVerification" ? "รอผู้ขายยืนยันจ่ายตรง" : "รอยืนยันส่งมอบ/รับของ"}</small>` : ""}
+              ${o.releaseBlockedReason ? `<small class="table-subline" style="color:var(--rose);font-weight:600;">${escapeHtml(o.releaseBlockedReason)}</small>` : ""}
             </div>
           </td>
         </tr>`).join("")
@@ -1503,6 +1545,23 @@
     }
   });
 
+  // Seller: Upload product image file
+  document.getElementById("listingImageFile")?.addEventListener("change", async e => {
+    const file = e.currentTarget.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await api("/api/seller/upload-image", { method: "POST", body: fd });
+      document.getElementById("listingImageUrlInput").value = res.imageUrl;
+      document.getElementById("listingImagePreview").src = res.imageUrl;
+      document.getElementById("listingImagePreviewWrap").classList.remove("hidden");
+      showToast(res.message);
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
   // Seller: Create Listing Form
   document.getElementById("listingForm")?.addEventListener("submit", async e => {
     e.preventDefault();
@@ -1525,8 +1584,51 @@
       });
       showToast(res.message);
       form.reset();
+      document.getElementById("listingImagePreviewWrap")?.classList.add("hidden");
       initListingDates();
       await loadSellerDashboard();
+    } catch (err) { showToast(err.message, true); }
+  });
+
+  // Forgot & Reset Password Forms
+  document.getElementById("forgotPasswordForm")?.addEventListener("submit", async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const email = String(new FormData(form).get("email") || "").trim();
+    try {
+      const res = await api("/api/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email })
+      });
+      showToast(res.message);
+      const resetForm = document.getElementById("resetPasswordForm");
+      if (resetForm) resetForm.email.value = email;
+      const devNotice = document.getElementById("forgotDevNotice");
+      if (devNotice && res.devResetCode) {
+        devNotice.innerHTML = `<strong>โหมดพัฒนา (Development)</strong>รหัสรีเซ็ต 6 หลักของคุณคือ: <strong>${escapeHtml(res.devResetCode)}</strong>`;
+        devNotice.classList.remove("hidden");
+        if (resetForm) resetForm.resetToken.value = res.devResetCode;
+      }
+    } catch (err) { showToast(err.message, true); }
+  });
+
+  document.getElementById("resetPasswordForm")?.addEventListener("submit", async e => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const fd = new FormData(form);
+    try {
+      const res = await api("/api/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({
+          email: fd.get("email"),
+          resetToken: fd.get("resetToken"),
+          newPassword: fd.get("newPassword")
+        })
+      });
+      showToast(res.message);
+      form.reset();
+      document.getElementById("forgotDevNotice")?.classList.add("hidden");
+      await openAuthModal("login");
     } catch (err) { showToast(err.message, true); }
   });
 
@@ -1549,12 +1651,12 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Buyer: Apply to become Seller
+  // Buyer: Apply to become Seller (consolidated endpoint)
   document.getElementById("buyerApplySellerForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     try {
-      const res = await api("/api/buyer/apply-seller", {
+      const res = await api("/api/seller/apply", {
         method: "POST",
         body: JSON.stringify({
           shopName: fd.get("shopName"),
@@ -1665,8 +1767,144 @@
       }
       if (targetView) {
         await switchView(targetView);
+        if (targetView === "today" && refId) {
+          await openProduct(refId);
+        }
       }
       await pollNotifications(true);
+      return;
+    }
+
+    // Auth tab buttons (including Forgot Password links)
+    const authTabBtn = target.closest("[data-auth-tab]");
+    if (authTabBtn) {
+      await openAuthModal(authTabBtn.dataset.authTab);
+      return;
+    }
+
+    // Audit Log filter buttons
+    const auditFilterBtn = target.closest("[data-audit-filter]");
+    if (auditFilterBtn) {
+      document.querySelectorAll("[data-audit-filter]").forEach(b => b.classList.toggle("active", b === auditFilterBtn));
+      await loadAuditLogs(auditFilterBtn.dataset.auditFilter).catch(err => showToast(err.message, true));
+      return;
+    }
+
+    // Change Password Modal
+    if (target.closest("[data-open-change-pw]")) {
+      document.getElementById("actionDialogContent").innerHTML = `
+        <h2 class="auth-title">เปลี่ยนรหัสผ่าน</h2>
+        <p class="auth-subtitle">กรอกรหัสผ่านเดิมและตั้งรหัสผ่านใหม่อย่างน้อย 6 ตัวอักษร</p>
+        <form id="changePasswordForm">
+          <label class="field-label">รหัสผ่านเดิม <span>*</span><input name="currentPassword" type="password" required></label>
+          <label class="field-label">รหัสผ่านใหม่ <span>*</span><input name="newPassword" type="password" minlength="6" required></label>
+          <div class="table-actions" style="justify-content:flex-end;">
+            <button type="button" class="button button-secondary" data-close-action="1">ยกเลิก</button>
+            <button type="submit" class="button button-primary">บันทึกรหัสผ่านใหม่</button>
+          </div>
+        </form>
+      `;
+      document.getElementById("changePasswordForm").addEventListener("submit", async e => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        try {
+          const res = await api("/api/auth/change-password", {
+            method: "POST",
+            body: JSON.stringify({ currentPassword: fd.get("currentPassword"), newPassword: fd.get("newPassword") })
+          });
+          showToast(res.message);
+          actionDialog.close();
+        } catch (err) { showToast(err.message, true); }
+      });
+      openDialogSafe(actionDialog);
+      return;
+    }
+
+    // Seller: Edit Pending/Rejected Listing
+    const editListBtn = target.closest("[data-edit-listing]");
+    if (editListBtn) {
+      const item = sellerListingsCache.find(x => x.id === Number(editListBtn.dataset.editListing));
+      if (!item) return;
+      const toLocal = iso => {
+        const d = parseUtcDate(iso);
+        return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      };
+      const catOpts = cachedCategories.map(c => `<option value="${c.id}" ${c.id === item.categoryId ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("");
+      document.getElementById("actionDialogContent").innerHTML = `
+        <h2 class="auth-title">แก้ไขสินค้า: ${escapeHtml(item.name)}</h2>
+        <p class="auth-subtitle">หลังบันทึก ระบบจะส่งให้แอดมินตรวจสอบอีกครั้ง</p>
+        <form id="editListingForm">
+          <label class="field-label">ชื่อสินค้า <span>*</span><input name="name" required maxlength="100" value="${escapeHtml(item.name)}"></label>
+          <div class="field-row">
+            <label class="field-label">หมวดหมู่ <span>*</span><select name="categoryId" required>${catOpts}</select></label>
+            <label class="field-label">สภาพสินค้า <span>*</span><input name="condition" required value="${escapeHtml(item.condition)}"></label>
+          </div>
+          <label class="field-label">รายละเอียด <span>*</span><textarea name="description" rows="3" required>${escapeHtml(item.description)}</textarea></label>
+          <div class="field-row">
+            <label class="field-label">อัปโหลดรูปใหม่ (ถ้าต้องการ)<input type="file" id="editListingImgFile" accept=".jpg,.jpeg,.png,.webp,image/*"></label>
+            <label class="field-label">ลิงก์รูปภาพ<input name="imageUrl" id="editListingImgUrl" value="${escapeHtml(item.imageUrl || "")}"></label>
+          </div>
+          <div class="field-row">
+            <label class="field-label">ราคาเริ่มต้น (บาท) <span>*</span><input name="startPrice" type="number" min="1" required value="${item.startPrice}"></label>
+            <label class="field-label">ขั้นต่ำต่อครั้ง (บาท) <span>*</span><input name="minIncrement" type="number" min="1" required value="${item.minIncrement}"></label>
+          </div>
+          <div class="field-row">
+            <label class="field-label">เริ่มประมูล <span>*</span><input name="startAt" type="datetime-local" required value="${toLocal(item.startAt)}"></label>
+            <label class="field-label">สิ้นสุดประมูล <span>*</span><input name="endAt" type="datetime-local" required value="${toLocal(item.endAt)}"></label>
+          </div>
+          <div class="table-actions" style="justify-content:flex-end;">
+            <button type="button" class="button button-secondary" data-close-action="1">ยกเลิก</button>
+            <button type="submit" class="button button-primary">บันทึกและส่งตรวจใหม่</button>
+          </div>
+        </form>
+      `;
+      document.getElementById("editListingImgFile").addEventListener("change", async e => {
+        const file = e.currentTarget.files?.[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          const res = await api("/api/seller/upload-image", { method: "POST", body: fd });
+          document.getElementById("editListingImgUrl").value = res.imageUrl;
+          showToast(res.message);
+        } catch (err) { showToast(err.message, true); }
+      });
+      document.getElementById("editListingForm").addEventListener("submit", async e => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        try {
+          const res = await api(`/api/seller/listings/${item.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              name: fd.get("name"),
+              categoryId: Number(fd.get("categoryId")),
+              condition: fd.get("condition"),
+              description: fd.get("description"),
+              imageUrl: fd.get("imageUrl"),
+              startPrice: Number(fd.get("startPrice")),
+              minIncrement: Number(fd.get("minIncrement")),
+              startAt: new Date(String(fd.get("startAt"))).toISOString(),
+              endAt: new Date(String(fd.get("endAt"))).toISOString()
+            })
+          });
+          showToast(res.message);
+          actionDialog.close();
+          await loadSellerDashboard();
+        } catch (err) { showToast(err.message, true); }
+      });
+      openDialogSafe(actionDialog);
+      return;
+    }
+
+    // Seller: Cancel/Delete Pending or Rejected Listing
+    const delListBtn = target.closest("[data-delete-listing]");
+    if (delListBtn) {
+      if (!window.confirm(`ยืนยันยกเลิกรายการสินค้า “${delListBtn.dataset.name}” ใช่หรือไม่?`)) return;
+      try {
+        const res = await api(`/api/seller/listings/${delListBtn.dataset.deleteListing}`, { method: "DELETE" });
+        showToast(res.message);
+        await loadSellerDashboard();
+      } catch (err) { showToast(err.message, true); }
       return;
     }
 

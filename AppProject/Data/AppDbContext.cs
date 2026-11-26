@@ -25,6 +25,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Dispute> Disputes => Set<Dispute>();
     public DbSet<FinanceSettings> FinanceSettings => Set<FinanceSettings>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
@@ -84,7 +85,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
         modelBuilder.Entity<OrderPayment>(entity =>
         {
-            entity.HasIndex(o => o.AuctionItemId).IsUnique();
+            entity.HasIndex(o => new { o.AuctionItemId, o.BuyerId }).IsUnique();
             entity.HasIndex(o => o.OrderCode).IsUnique();
             entity.HasOne(o => o.AuctionItem).WithMany().HasForeignKey(o => o.AuctionItemId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(o => o.Buyer).WithMany().HasForeignKey(o => o.BuyerId).OnDelete(DeleteBehavior.Restrict);
@@ -116,6 +117,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         {
             entity.HasIndex(n => new { n.UserId, n.IsRead, n.CreatedAt });
             entity.HasOne(n => n.User).WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.HasIndex(a => a.CreatedAt);
+            entity.HasOne(a => a.Actor).WithMany().HasForeignKey(a => a.ActorId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

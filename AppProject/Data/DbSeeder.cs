@@ -8,8 +8,7 @@ public static class DbSeeder
 {
     public static async Task SeedAsync(AppDbContext db)
     {
-        await db.Database.EnsureCreatedAsync();
-        await EnsureSchemaUpgradesAsync(db);
+        await MigrateOrUpgradeLegacyDbAsync(db);
 
         if (await db.Users.AnyAsync())
             return;
@@ -495,87 +494,119 @@ public static class DbSeeder
         await db.SaveChangesAsync();
     }
 
-    private static async Task EnsureSchemaUpgradesAsync(AppDbContext db)
+    private static async Task MigrateOrUpgradeLegacyDbAsync(AppDbContext db)
     {
         var conn = db.Database.GetDbConnection();
         var shouldClose = conn.State != System.Data.ConnectionState.Open;
         if (shouldClose) await conn.OpenAsync();
         try
         {
-            using (var cmd = conn.CreateCommand())
+            async Task<bool> TableExistsAsync(string name)
             {
-                cmd.CommandText = """
-                    CREATE TABLE IF NOT EXISTS "Notifications" (
-                        "Id" INTEGER NOT NULL CONSTRAINT "PK_Notifications" PRIMARY KEY AUTOINCREMENT,
-                        "UserId" INTEGER NOT NULL,
-                        "Type" TEXT NOT NULL,
-                        "Title" TEXT NOT NULL,
-                        "Body" TEXT NOT NULL,
-                        "TargetView" TEXT NULL,
-                        "ReferenceId" INTEGER NULL,
-                        "IsRead" INTEGER NOT NULL,
-                        "CreatedAt" TEXT NOT NULL,
-                        CONSTRAINT "FK_Notifications_Users_UserId" FOREIGN KEY ("UserId") REFERENCES "Users" ("Id") ON DELETE CASCADE
-                    );
-                    CREATE INDEX IF NOT EXISTS "IX_Notifications_UserId_IsRead_CreatedAt" ON "Notifications" ("UserId", "IsRead", "CreatedAt");
-                    """;
-                await cmd.ExecuteNonQueryAsync();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$n;";
+                var p = cmd.CreateParameter();
+                p.ParameterName = "$n";
+                p.Value = name;
+                cmd.Parameters.Add(p);
+                return Convert.ToInt64(await cmd.ExecuteScalarAsync()) > 0;
             }
 
-            var existingCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var pragma = conn.CreateCommand())
+            var hasUsers = await TableExistsAsync("Users");
+            var hasHistory = await TableExistsAsync("__EFMigrationsHistory");
+
+            // If DB already existed from EnsureCreated() before EF Migrations, sync columns & baseline history once
+            if (hasUsers && !hasHistory)
             {
-                pragma.CommandText = "PRAGMA table_info(\"Conversations\");";
-                using var reader = await pragma.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
+                async Task EnsureColumnAsync(string table, string column, string sqlType)
                 {
-                    existingCols.Add(reader.GetString(1));
+                    var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    using (var p = conn.CreateCommand())
+                    {
+                        p.CommandText = $"PRAGMA table_info(\"{table}\");";
+                        using var r = await p.ExecuteReaderAsync();
+                        while (await r.ReadAsync()) cols.Add(r.GetString(1));
+                    }
+                    if (cols.Count > 0 && !cols.Contains(column))
+                    {
+                        using var a = conn.CreateCommand();
+                        a.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {sqlType};";
+                        await a.ExecuteNonQueryAsync();
+                    }
+                }
+
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = """
+                        CREATE TABLE IF NOT EXISTS "Notifications" (
+                            "Id" INTEGER NOT NULL CONSTRAINT "PK_Notifications" PRIMARY KEY AUTOINCREMENT,
+                            "UserId" INTEGER NOT NULL,
+                            "Type" TEXT NOT NULL,
+                            "Title" TEXT NOT NULL,
+                            "Body" TEXT NOT NULL,
+                            "TargetView" TEXT NULL,
+                            "ReferenceId" INTEGER NULL,
+                            "IsRead" INTEGER NOT NULL,
+                            "CreatedAt" TEXT NOT NULL,
+                            CONSTRAINT "FK_Notifications_Users_UserId" FOREIGN KEY ("UserId") REFERENCES "Users" ("Id") ON DELETE CASCADE
+                        );
+                        CREATE INDEX IF NOT EXISTS "IX_Notifications_UserId_IsRead_CreatedAt" ON "Notifications" ("UserId", "IsRead", "CreatedAt");
+
+                        CREATE TABLE IF NOT EXISTS "AuditLogs" (
+                            "Id" INTEGER NOT NULL CONSTRAINT "PK_AuditLogs" PRIMARY KEY AUTOINCREMENT,
+                            "ActorId" INTEGER NOT NULL,
+                            "ActorName" TEXT NOT NULL,
+                            "ActorRole" TEXT NOT NULL,
+                            "Action" TEXT NOT NULL,
+                            "TargetType" TEXT NOT NULL,
+                            "TargetId" INTEGER NULL,
+                            "Details" TEXT NOT NULL,
+                            "CreatedAt" TEXT NOT NULL,
+                            CONSTRAINT "FK_AuditLogs_Users_ActorId" FOREIGN KEY ("ActorId") REFERENCES "Users" ("Id") ON DELETE RESTRICT
+                        );
+                        CREATE INDEX IF NOT EXISTS "IX_AuditLogs_ActorId" ON "AuditLogs" ("ActorId");
+                        CREATE INDEX IF NOT EXISTS "IX_AuditLogs_CreatedAt" ON "AuditLogs" ("CreatedAt");
+                        """;
+                    await cmd.ExecuteNonQueryAsync();
+                }
+
+                await EnsureColumnAsync("Conversations", "BuyerLastReadAt", "TEXT NULL");
+                await EnsureColumnAsync("Conversations", "SellerLastReadAt", "TEXT NULL");
+                await EnsureColumnAsync("OrderPayments", "PaymentMethod", "TEXT NOT NULL DEFAULT 'PlatformEscrow'");
+                await EnsureColumnAsync("OrderPayments", "PaymentSlipUrl", "TEXT NULL");
+                await EnsureColumnAsync("OrderPayments", "PaymentNote", "TEXT NULL");
+                await EnsureColumnAsync("OrderPayments", "PaymentSubmittedAt", "TEXT NULL");
+                await EnsureColumnAsync("OrderPayments", "PaymentRejectReason", "TEXT NULL");
+                await EnsureColumnAsync("OrderPayments", "PaymentDueAt", "TEXT NULL");
+                await EnsureColumnAsync("FinanceSettings", "PlatformPromptPayId", "TEXT NOT NULL DEFAULT '081-999-8888'");
+                await EnsureColumnAsync("FinanceSettings", "PlatformAccountName", "TEXT NOT NULL DEFAULT 'บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)'");
+                await EnsureColumnAsync("AuctionItems", "Version", "INTEGER NOT NULL DEFAULT 1");
+                await EnsureColumnAsync("Users", "FailedLoginCount", "INTEGER NOT NULL DEFAULT 0");
+                await EnsureColumnAsync("Users", "LockoutEndAt", "TEXT NULL");
+                await EnsureColumnAsync("Users", "PasswordResetToken", "TEXT NULL");
+                await EnsureColumnAsync("Users", "PasswordResetExpiresAt", "TEXT NULL");
+
+                using (var idx = conn.CreateCommand())
+                {
+                    idx.CommandText = """
+                        DROP INDEX IF EXISTS "IX_OrderPayments_AuctionItemId";
+                        CREATE UNIQUE INDEX IF NOT EXISTS "IX_OrderPayments_AuctionItemId_BuyerId" ON "OrderPayments" ("AuctionItemId", "BuyerId");
+                        CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+                            "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
+                            "ProductVersion" TEXT NOT NULL
+                        );
+                        INSERT OR IGNORE INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+                        VALUES ('20261126135143_InitialSchema', '10.0.0');
+                        """;
+                    await idx.ExecuteNonQueryAsync();
                 }
             }
-
-            if (!existingCols.Contains("BuyerLastReadAt"))
-            {
-                using var alter = conn.CreateCommand();
-                alter.CommandText = "ALTER TABLE \"Conversations\" ADD COLUMN \"BuyerLastReadAt\" TEXT NULL;";
-                await alter.ExecuteNonQueryAsync();
-            }
-
-            if (!existingCols.Contains("SellerLastReadAt"))
-            {
-                using var alter = conn.CreateCommand();
-                alter.CommandText = "ALTER TABLE \"Conversations\" ADD COLUMN \"SellerLastReadAt\" TEXT NULL;";
-                await alter.ExecuteNonQueryAsync();
-            }
-
-            async Task EnsureColumnAsync(string table, string column, string sqlType)
-            {
-                var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                using (var p = conn.CreateCommand())
-                {
-                    p.CommandText = $"PRAGMA table_info(\"{table}\");";
-                    using var r = await p.ExecuteReaderAsync();
-                    while (await r.ReadAsync()) cols.Add(r.GetString(1));
-                }
-                if (cols.Count > 0 && !cols.Contains(column))
-                {
-                    using var a = conn.CreateCommand();
-                    a.CommandText = $"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {sqlType};";
-                    await a.ExecuteNonQueryAsync();
-                }
-            }
-
-            await EnsureColumnAsync("OrderPayments", "PaymentMethod", "TEXT NOT NULL DEFAULT 'PlatformEscrow'");
-            await EnsureColumnAsync("OrderPayments", "PaymentSlipUrl", "TEXT NULL");
-            await EnsureColumnAsync("OrderPayments", "PaymentNote", "TEXT NULL");
-            await EnsureColumnAsync("OrderPayments", "PaymentSubmittedAt", "TEXT NULL");
-            await EnsureColumnAsync("OrderPayments", "PaymentRejectReason", "TEXT NULL");
-
-            await EnsureColumnAsync("FinanceSettings", "PlatformPromptPayId", "TEXT NOT NULL DEFAULT '081-999-8888'");
-            await EnsureColumnAsync("FinanceSettings", "PlatformAccountName", "TEXT NOT NULL DEFAULT 'บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)'");
         }
         finally
         {
             if (shouldClose) await conn.CloseAsync();
         }
+
+        await db.Database.MigrateAsync();
     }
 }

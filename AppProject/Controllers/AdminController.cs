@@ -1,6 +1,5 @@
 using AppProject.Data;
 using AppProject.Models;
-using AppProject.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +8,7 @@ namespace AppProject.Controllers;
 
 [Authorize(Roles = Roles.Admin)]
 [Route("api/admin")]
-public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle) : ApiBaseController(db)
+public class AdminController(AppDbContext db) : ApiBaseController(db)
 {
     public record ReviewSellerRequest(bool Approve, string? Reason);
     public record ReviewAuctionRequest(bool Approve, string? Reason);
@@ -20,7 +19,6 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
     [HttpGet("dashboard")]
     public async Task<IActionResult> GetDashboard()
     {
-        await lifecycle.CloseExpiredAuctionsAsync();
         var now = DateTime.UtcNow;
 
         var pendingSellers = await Db.Users
@@ -59,7 +57,6 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
             .OrderByDescending(d => d.CreatedAt)
             .ToListAsync();
 
-        // Read-only winners archive for Admin
         var winners = await Db.OrderPayments
             .Include(o => o.AuctionItem)!.ThenInclude(a => a!.Category)
             .Include(o => o.Buyer)
@@ -128,6 +125,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
             {
                 o.Id,
                 o.OrderCode,
+                o.AuctionItemId,
                 itemName = o.AuctionItem?.Name ?? "",
                 categoryName = o.AuctionItem?.Category?.Name ?? "",
                 imageUrl = o.AuctionItem?.ImageUrl ?? "",
@@ -135,6 +133,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 sellerName = o.Seller?.ShopName ?? o.Seller?.DisplayName ?? "",
                 o.WinningPrice,
                 o.FinalBuyerAmount,
+                o.PaymentMethod,
                 o.PaymentStatus,
                 o.MeetupStatus,
                 o.CreatedAt
@@ -145,6 +144,9 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
     [HttpPost("sellers/{userId:int}/review")]
     public async Task<IActionResult> ReviewSeller(int userId, [FromBody] ReviewSellerRequest req)
     {
+        var admin = await GetCurrentActiveUserAsync();
+        if (admin is null) return Unauthorized();
+
         var target = await Db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (target is null) return NotFound(new { message = "ไม่พบบัญชีผู้ใช้" });
         if (target.SellerStatus != SellerStatuses.Pending)
@@ -165,6 +167,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 IsRead = false,
                 CreatedAt = DateTime.UtcNow
             });
+            AddAuditLog(admin, "ApproveSeller", "User", target.Id, $"อนุมัติผู้ขาย {target.DisplayName} (ร้าน {target.ShopName})");
         }
         else
         {
@@ -182,6 +185,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 IsRead = false,
                 CreatedAt = DateTime.UtcNow
             });
+            AddAuditLog(admin, "RejectSeller", "User", target.Id, $"ปฏิเสธผู้ขาย {target.DisplayName}: {target.SellerRejectReason}");
         }
 
         await Db.SaveChangesAsync();
@@ -191,6 +195,9 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
     [HttpPost("auctions/{itemId:int}/review")]
     public async Task<IActionResult> ReviewAuction(int itemId, [FromBody] ReviewAuctionRequest req)
     {
+        var admin = await GetCurrentActiveUserAsync();
+        if (admin is null) return Unauthorized();
+
         var item = await Db.AuctionItems.FirstOrDefaultAsync(a => a.Id == itemId);
         if (item is null) return NotFound(new { message = "ไม่พบสินค้า" });
         if (item.Status != AuctionStatuses.Pending)
@@ -200,7 +207,6 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
         {
             item.Status = AuctionStatuses.Approved;
             item.RejectReason = null;
-            // Ensure end date is still in future if seller picked close time
             if (item.EndAt <= DateTime.UtcNow)
                 item.EndAt = DateTime.UtcNow.AddHours(24);
             Db.Notifications.Add(new Notification
@@ -214,6 +220,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 IsRead = false,
                 CreatedAt = DateTime.UtcNow
             });
+            AddAuditLog(admin, "ApproveAuction", "AuctionItem", item.Id, $"อนุมัติสินค้า “{item.Name}” เริ่ม ฿{item.StartPrice:N0}");
         }
         else
         {
@@ -232,6 +239,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
                 IsRead = false,
                 CreatedAt = DateTime.UtcNow
             });
+            AddAuditLog(admin, "RejectAuction", "AuctionItem", item.Id, $"ปฏิเสธสินค้า “{item.Name}”: {item.RejectReason}");
         }
 
         await Db.SaveChangesAsync();
@@ -254,6 +262,8 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
 
         target.IsSuspended = req.Suspend;
         target.SuspendReason = req.Suspend ? req.Reason!.Trim() : null;
+        AddAuditLog(me, req.Suspend ? "SuspendUser" : "UnsuspendUser", "User", target.Id,
+            req.Suspend ? $"ระงับบัญชี {target.Email}: {target.SuspendReason}" : $"ปลดระงับบัญชี {target.Email}");
         await Db.SaveChangesAsync();
 
         return Ok(new { message = req.Suspend ? $"ระงับบัญชี {target.DisplayName} แล้ว" : $"ปลดระงับบัญชี {target.DisplayName} แล้ว" });
@@ -262,6 +272,9 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
     [HttpPost("categories")]
     public async Task<IActionResult> CreateCategory([FromBody] CategoryRequest req)
     {
+        var admin = await GetCurrentActiveUserAsync();
+        if (admin is null) return Unauthorized();
+
         var name = (req.Name ?? "").Trim();
         if (string.IsNullOrWhiteSpace(name))
             return BadRequest(new { message = "กรุณาระบุชื่อหมวดหมู่" });
@@ -278,12 +291,17 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
         };
         Db.Categories.Add(cat);
         await Db.SaveChangesAsync();
+        AddAuditLog(admin, "CreateCategory", "Category", cat.Id, $"เพิ่มหมวดหมู่ “{cat.Name}”");
+        await Db.SaveChangesAsync();
         return Ok(new { message = $"เพิ่มหมวดหมู่ “{cat.Name}” แล้ว", category = cat });
     }
 
     [HttpPut("categories/{id:int}")]
     public async Task<IActionResult> UpdateCategory(int id, [FromBody] CategoryRequest req)
     {
+        var admin = await GetCurrentActiveUserAsync();
+        if (admin is null) return Unauthorized();
+
         var cat = await Db.Categories.FirstOrDefaultAsync(c => c.Id == id);
         if (cat is null) return NotFound(new { message = "ไม่พบหมวดหมู่" });
 
@@ -297,6 +315,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
         cat.Symbol = string.IsNullOrWhiteSpace(req.Symbol) ? cat.Symbol : req.Symbol.Trim();
         cat.Description = req.Description?.Trim();
         cat.IsActive = req.IsActive;
+        AddAuditLog(admin, "UpdateCategory", "Category", cat.Id, $"แก้ไขหมวดหมู่ “{cat.Name}” (Active={cat.IsActive})");
         await Db.SaveChangesAsync();
         return Ok(new { message = $"อัปเดตหมวดหมู่ “{cat.Name}” แล้ว" });
     }
@@ -304,6 +323,9 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
     [HttpDelete("categories/{id:int}")]
     public async Task<IActionResult> DeleteCategory(int id)
     {
+        var admin = await GetCurrentActiveUserAsync();
+        if (admin is null) return Unauthorized();
+
         var cat = await Db.Categories.FirstOrDefaultAsync(c => c.Id == id);
         if (cat is null) return NotFound(new { message = "ไม่พบหมวดหมู่" });
 
@@ -311,16 +333,17 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
         if (inUse)
         {
             cat.IsActive = false;
+            AddAuditLog(admin, "DeactivateCategory", "Category", cat.Id, $"ปิดการใช้งานหมวดหมู่ “{cat.Name}” (มีสินค้าผูกอยู่)");
             await Db.SaveChangesAsync();
             return Ok(new { message = $"หมวดหมู่ “{cat.Name}” มีสินค้าผูกอยู่ ระบบจึงปิดการใช้งานแทนการลบ" });
         }
 
         Db.Categories.Remove(cat);
+        AddAuditLog(admin, "DeleteCategory", "Category", cat.Id, $"ลบหมวดหมู่ “{cat.Name}”");
         await Db.SaveChangesAsync();
         return Ok(new { message = $"ลบหมวดหมู่ “{cat.Name}” แล้ว" });
     }
 
-    // Admin can ONLY inspect chat messages of a conversation that has an actual reported Dispute!
     [HttpGet("disputes/{disputeId:int}/messages")]
     public async Task<IActionResult> GetDisputeChat(int disputeId)
     {
@@ -363,6 +386,9 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
     [HttpPost("disputes/{disputeId:int}/update")]
     public async Task<IActionResult> UpdateDispute(int disputeId, [FromBody] UpdateDisputeRequest req)
     {
+        var admin = await GetCurrentActiveUserAsync();
+        if (admin is null) return Unauthorized();
+
         var dispute = await Db.Disputes.FirstOrDefaultAsync(d => d.Id == disputeId);
         if (dispute is null) return NotFound(new { message = "ไม่พบข้อพิพาท" });
 
@@ -374,6 +400,7 @@ public class AdminController(AppDbContext db, AuctionLifecycleService lifecycle)
         dispute.AdminNote = req.AdminNote?.Trim();
         dispute.ResolvedAt = req.Status == DisputeStatuses.Resolved ? DateTime.UtcNow : null;
 
+        AddAuditLog(admin, "UpdateDispute", "Dispute", dispute.Id, $"ปรับสถานะข้อพิพาท #{dispute.Id} -> {dispute.Status} ({dispute.AdminNote ?? "-"})");
         await Db.SaveChangesAsync();
         return Ok(new { message = "อัปเดตสถานะข้อพิพาทเรียบร้อยแล้ว" });
     }
