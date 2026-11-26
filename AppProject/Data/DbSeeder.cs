@@ -1,30 +1,59 @@
+// ============================================================================
+// 📄 ชื่อไฟล์: AppProject/Data/DbSeeder.cs
+// 🏷️ บทบาท: ฝั่งหลังบ้าน (Backend) — ตัวอัปเกรดโครงสร้างฐานข้อมูลและเติมข้อมูลตัวอย่างเริ่มต้น (Database Migration & Seeder)
+// 📝 หน้าที่โดยรวม:
+//    1) ตรวจสอบและอัปเกรดฐานข้อมูล SQLite รุ่นเก่า (ที่สร้างก่อนใช้ EF Migrations) และรัน Database.MigrateAsync()
+//    2) เติมข้อมูลตัวอย่างเริ่มต้น (Seed Data) เมื่อฐานข้อมูลยังว่างเปล่า เช่น บัญชีทดลองใช้งาน, หมวดหมู่,
+//       สินค้าประมูล (ทั้งเปิดประมูล/รออนุมัติ/ปิดแล้ว), ประวัติบิด, คำสั่งซื้อ, แชท, ข้อพิพาท และการแจ้งเตือน
+// 🔄 การเชื่อมต่อกับส่วนอื่นในระบบ:
+//    - ถูกเรียกทำงานอัตโนมัติทุกครั้งเมื่อเปิดเซิร์ฟเวอร์ใน AppProject/Program.cs (DbSeeder.SeedAsync(db))
+//    - ใช้ AppDbContext (AppProject/Data/AppDbContext.cs), Entities (AppProject/Models/Entities.cs) และ PasswordService
+//    - บัญชีตัวอย่างและข้อมูลที่เติมในไฟล์นี้จะถูกส่งไปยังฝั่งหน้าบ้าน (wwwroot/js/site.js) ผ่าน API ต่าง ๆ ทันทีที่เปิดเว็บ
+// ============================================================================
+
 using AppProject.Models;
 using AppProject.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace AppProject.Data;
 
+// คลาสสแตติกสำหรับอัปเกรด Schema และสร้างข้อมูลจำลองเริ่มต้นของระบบประมูล "ของเก่าเล่าเรื่อง"
 public static class DbSeeder
 {
+    // เมธอดหลักสำหรับเตรียมฐานข้อมูลและเติมข้อมูลเริ่มต้น (เรียกครั้งเดียวตอน Startup ใน Program.cs)
     public static async Task SeedAsync(AppDbContext db)
     {
+        // ขั้นตอนที่ 1: อัปเกรดฐานข้อมูลรุ่นเก่า (ถ้ามี) และรัน EF Core Migrations ให้ตารางครบถ้วนก่อนเสมอ
         await MigrateOrUpgradeLegacyDbAsync(db);
 
+        // ป้องกันการเติมข้อมูลซ้ำ (Idempotent): หากมีผู้ใช้อยู่ในระบบแล้วให้จบการทำงานทันที
         if (await db.Users.AnyAsync())
             return;
 
+        // ใช้เวลาปัจจุบันแบบ UTC เป็นฐานอ้างอิงในการกำหนดเวลาเริ่มต้น/สิ้นสุดของข้อมูลตัวอย่างทั้งหมด
         var now = DateTime.UtcNow;
 
+        // --------------------------------------------------------------------
+        // 1. ตั้งค่าการเงินกลางของแพลตฟอร์ม (FinanceSettings — แถวเดียว Id = 1)
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] ค่าเหล่านี้ส่งให้หน้าบ้านผ่าน GET /api/auth/me และ GET /api/finance/dashboard
+        // --------------------------------------------------------------------
         var settings = new FinanceSettings
         {
             Id = 1,
-            SameCategoryDiscountPercent = 10,
-            PlatformFeePercent = 5,
-            GlobalMinBidIncrement = 50,
+            SameCategoryDiscountPercent = 10, // ส่วนลดซื้อสินค้าหมวดเดียวกัน 10%
+            PlatformFeePercent = 5,           // ค่าธรรมเนียมแพลตฟอร์ม 5%
+            GlobalMinBidIncrement = 50,       // ขั้นต่ำในการเพิ่มราคาบิดกลาง 50 บาท
             UpdatedAt = now
         };
         db.FinanceSettings.Add(settings);
 
+        // --------------------------------------------------------------------
+        // 2. สร้างบัญชีผู้ใช้ตัวอย่างครบทุกบทบาท (รหัสผ่านทุกบัญชีคือ "123456")
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าบ้าน (wwwroot/js/site.js) ดึงรายชื่อบัญชีทดลองผ่าน GET /api/auth/demo-accounts
+        //    และล็อกอินผ่าน POST /api/auth/login (AuthController) เพื่อสร้าง Auth Cookie
+        // --------------------------------------------------------------------
+
+        // ผู้ซื้อคนที่ 1 (มีประวัติชนะประมูลและได้สิทธิ์ส่วนลดหมวดเดียวกัน 10%)
         var buyer1 = new User
         {
             DisplayName = "คุณพิมพ์ชนก (ผู้ประมูล)",
@@ -36,6 +65,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-20)
         };
 
+        // ผู้ซื้อคนที่ 2 (ส่งคำขอสมัครเป็นผู้ขายไว้ สถานะ Pending เพื่อให้แอดมินทดลองกดอนุมัติ)
         var buyer2 = new User
         {
             DisplayName = "คุณปกรณ์ นักสะสม",
@@ -51,6 +81,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-18)
         };
 
+        // ผู้ขายคนที่ 1 (ได้รับการอนุมัติแล้ว — เจ้าของสินค้ามีดญี่ปุ่น, เหรียญ ร.5, นาฬิกาไขลาน)
         var seller1 = new User
         {
             DisplayName = "คุณชาญชัย (ผู้ขาย)",
@@ -66,6 +97,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-30)
         };
 
+        // ผู้ขายคนที่ 2 (ได้รับการอนุมัติแล้ว — เจ้าของสินค้าชุดชงชา, แจกัน, กาน้ำชา และถ้วยชา)
         var seller2 = new User
         {
             DisplayName = "คุณรัตนา (ผู้ขาย)",
@@ -81,6 +113,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-25)
         };
 
+        // บัญชีผู้ขายที่รออนุมัติ (แสดงในคิวอนุมัติผู้ขายของหน้า Admin Dashboard)
         var pendingSeller = new User
         {
             DisplayName = "คุณวิชัย (รออนุมัติผู้ขาย)",
@@ -96,6 +129,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-2)
         };
 
+        // บัญชีผู้ดูแลระบบ (Admin) สำหรับจัดการอนุมัติผู้ขาย สินค้า หมวดหมู่ และข้อพิพาท
         var admin = new User
         {
             DisplayName = "แอดมินสุวิจักขณ์",
@@ -106,6 +140,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-60)
         };
 
+        // บัญชีฝ่ายการเงิน (Finance) สำหรับตรวจสลิป ปล่อยเงิน Escrow คืนเงิน และตั้งค่าอัตราการเงิน
         var finance = new User
         {
             DisplayName = "ฝ่ายการเงินนิภา",
@@ -116,18 +151,32 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-60)
         };
 
+        // บันทึกผู้ใช้ทั้งหมดลงฐานข้อมูลก่อนเพื่อให้ได้ค่า User.Id สำหรับใช้เป็น Foreign Key ในตารางถัดไป
         db.Users.AddRange(buyer1, buyer2, seller1, seller2, pendingSeller, admin, finance);
         await db.SaveChangesAsync();
 
+        // --------------------------------------------------------------------
+        // 3. สร้างหมวดหมู่สินค้าเริ่มต้น 4 หมวดหมู่
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] ส่งไปแสดงแถบตัวกรองหมวดหมู่ในหน้าแรกผ่าน GET /api/auctions
+        // --------------------------------------------------------------------
         var catKitchen = new Category { Name = "เครื่องครัว", Symbol = "♨", Description = "มีดตีมือ กระทะเหล็กหล่อ และเครื่องครัววินเทจ", IsActive = true };
         var catTea = new Category { Name = "ชาและเซรามิก", Symbol = "◌", Description = "ชุดชงชา ถ้วยลายคราม และเครื่องปั้นดินเผา", IsActive = true };
         var catCoin = new Category { Name = "เหรียญสะสม", Symbol = "◎", Description = "เหรียญหายาก ธนบัตร และของสะสมทางประวัติศาสตร์", IsActive = true };
         var catDecor = new Category { Name = "ของแต่งบ้าน", Symbol = "⌂", Description = "นาฬิกา โคมไฟ แจกัน และของตกแต่งโบราณ", IsActive = true };
 
+        // บันทึกหมวดหมู่ลงฐานข้อมูลเพื่อให้ได้ Category.Id สำหรับผูกกับ AuctionItem
         db.Categories.AddRange(catKitchen, catTea, catCoin, catDecor);
         await db.SaveChangesAsync();
 
-        // Live Approved Auctions
+        // --------------------------------------------------------------------
+        // 4. สร้างรายการสินค้าประมูลตัวอย่าง (แบ่งเป็น 3 กลุ่ม: กำลังประมูล, รออนุมัติ, ปิดประมูลแล้ว)
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+        //    - สินค้ากลุ่ม Approved แสดงบนหน้าตลาดประมูลผ่าน GET /api/auctions (wwwroot/js/site.js)
+        //    - สินค้ากลุ่ม Pending แสดงในคิวตรวจอนุมัติของแอดมินผ่าน GET /api/admin/dashboard
+        //    - สินค้ากลุ่ม Closed ใช้แสดงประวัติคำสั่งซื้อ ส่วนลดหมวดเดียวกัน และข้อพิพาท
+        // --------------------------------------------------------------------
+
+        // 4.1 สินค้าที่ได้รับอนุมัติและกำลังเปิดประมูลอยู่ (Live Approved Auctions)
         var knife = new AuctionItem
         {
             Name = "มีดครัวญี่ปุ่นตีมือ",
@@ -140,7 +189,7 @@ public static class DbSeeder
             CurrentPrice = 1250,
             MinIncrement = 100,
             StartAt = now.AddHours(-6),
-            EndAt = now.AddHours(3),
+            EndAt = now.AddHours(3), // เหลือเวลาประมูลอีก 3 ชม.
             Status = AuctionStatuses.Approved,
             CreatedAt = now.AddHours(-8)
         };
@@ -157,7 +206,7 @@ public static class DbSeeder
             CurrentPrice = 2800,
             MinIncrement = 200,
             StartAt = now.AddHours(-5),
-            EndAt = now.AddHours(6),
+            EndAt = now.AddHours(6), // เหลือเวลาประมูลอีก 6 ชม.
             Status = AuctionStatuses.Approved,
             CreatedAt = now.AddHours(-6)
         };
@@ -174,7 +223,7 @@ public static class DbSeeder
             CurrentPrice = 1950,
             MinIncrement = 50,
             StartAt = now.AddHours(-10),
-            EndAt = now.AddMinutes(55),
+            EndAt = now.AddMinutes(55), // ใกล้ปิดประมูล (อีก 55 นาที) เพื่อให้เห็นป้ายใกล้หมดเวลาบนหน้าบ้าน
             Status = AuctionStatuses.Approved,
             CreatedAt = now.AddHours(-12)
         };
@@ -191,12 +240,12 @@ public static class DbSeeder
             CurrentPrice = 1600,
             MinIncrement = 100,
             StartAt = now.AddHours(-2),
-            EndAt = now.AddHours(10),
+            EndAt = now.AddHours(10), // เหลือเวลาประมูลอีก 10 ชม.
             Status = AuctionStatuses.Approved,
             CreatedAt = now.AddHours(-3)
         };
 
-        // Pending Auctions for Admin review
+        // 4.2 สินค้าที่รออนุมัติจากแอดมิน (Pending Auctions for Admin review)
         var pendingPan = new AuctionItem
         {
             Name = "กระทะเหล็กหล่อโบราณ",
@@ -231,7 +280,7 @@ public static class DbSeeder
             CreatedAt = now.AddHours(-1)
         };
 
-        // Closed Auctions (Historical + Unpaid with Same-Category Discount!)
+        // 4.3 สินค้าที่ปิดประมูลแล้ว (Closed Auctions — ใช้จำลองประวัติการซื้อ ส่วนลดหมวดเดียวกัน และกรณีข้อพิพาท)
         var closedTea1 = new AuctionItem
         {
             Name = "กาน้ำชาดินเผาจื่อซา",
@@ -246,7 +295,7 @@ public static class DbSeeder
             StartAt = now.AddDays(-5),
             EndAt = now.AddDays(-3),
             Status = AuctionStatuses.Closed,
-            WinnerId = buyer1.Id,
+            WinnerId = buyer1.Id, // ผู้ซื้อคนที่ 1 ชนะและชำระเงินแล้ว (ทำให้มีสิทธิ์รับส่วนลดหมวดชาและเซรามิกในชิ้นถัดไป)
             CreatedAt = now.AddDays(-6)
         };
 
@@ -264,7 +313,7 @@ public static class DbSeeder
             StartAt = now.AddDays(-2),
             EndAt = now.AddHours(-4),
             Status = AuctionStatuses.Closed,
-            WinnerId = buyer1.Id,
+            WinnerId = buyer1.Id, // ผู้ซื้อคนที่ 1 ชนะชิ้นที่ 2 ในหมวดเดียวกัน (รอชำระเงินพร้อมส่วนลด 10%)
             CreatedAt = now.AddDays(-3)
         };
 
@@ -282,14 +331,18 @@ public static class DbSeeder
             StartAt = now.AddDays(-4),
             EndAt = now.AddDays(-1),
             Status = AuctionStatuses.Closed,
-            WinnerId = buyer2.Id,
+            WinnerId = buyer2.Id, // ผู้ซื้อคนที่ 2 ชนะประมูล (มีข้อพิพาทเปิดไว้เพื่อสาธิตงานแอดมินและการเงิน)
             CreatedAt = now.AddDays(-5)
         };
 
+        // บันทึกรายการสินค้าประมูลทั้งหมดก่อนเพื่อให้ได้ AuctionItem.Id สำหรับสร้าง Bid, SavedItem, OrderPayment และ Conversation
         db.AuctionItems.AddRange(knife, teaSet, coin, vase, pendingPan, pendingCups, closedTea1, closedTea2, closedClock);
         await db.SaveChangesAsync();
 
-        // Bids
+        // --------------------------------------------------------------------
+        // 5. สร้างประวัติการเสนอราคา (Bids) และรายการบันทึกสนใจ (SavedItems)
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] แสดงในรายละเอียดสินค้า (GET /api/auctions/{id}) และแดชบอร์ดผู้ซื้อ (GET /api/buyer/dashboard)
+        // --------------------------------------------------------------------
         db.Bids.AddRange(
             new Bid { AuctionItemId = knife.Id, BidderId = buyer2.Id, Amount = 1050, CreatedAt = now.AddHours(-3) },
             new Bid { AuctionItemId = knife.Id, BidderId = buyer1.Id, Amount = 1150, CreatedAt = now.AddHours(-2) },
@@ -304,10 +357,16 @@ public static class DbSeeder
             new Bid { AuctionItemId = closedClock.Id, BidderId = buyer2.Id, Amount = 3200, CreatedAt = now.AddDays(-1).AddHours(-2) }
         );
 
+        // จำลองว่า buyer1 กดบันทึกรายการ "มีดครัวญี่ปุ่นตีมือ" ไว้ในรายการที่สนใจ
         db.SavedItems.Add(new SavedItem { UserId = buyer1.Id, AuctionItemId = knife.Id, CreatedAt = now.AddHours(-2) });
 
-        // Orders / Payments
-        // 1) Completed + Payout Released (Buyer1 bought Tea item #1)
+        // --------------------------------------------------------------------
+        // 6. สร้างคำสั่งซื้อและการชำระเงินตัวอย่าง 3 สถานะ (OrderPayments)
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] ข้อมูลชุดนี้แสดงในหน้าชำระเงินผู้ซื้อ (GET /api/buyer/dashboard),
+        //    หน้ายอดขายผู้ขาย (GET /api/seller/dashboard) และหน้าฝ่ายการเงิน (GET /api/finance/dashboard)
+        // --------------------------------------------------------------------
+
+        // คำสั่งซื้อที่ 1: ปิดงานสมบูรณ์ (ชำระแล้ว + นัดรับเสร็จ + ฝ่ายการเงินปล่อยเงินให้ผู้ขายแล้ว)
         var order1 = new OrderPayment
         {
             OrderCode = "AUC-0001",
@@ -335,7 +394,7 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-3)
         };
 
-        // 2) Unpaid order for Buyer1 in SAME category (ชาและเซรามิก) -> gets 10% same-category discount!
+        // คำสั่งซื้อที่ 2: รอชำระเงินของ buyer1 ในหมวดเดียวกัน ("ชาและเซรามิก") -> ได้ส่วนลดซื้อหมวดเดียวกัน 10% (เหลือ ฿1,620)
         var order2 = new OrderPayment
         {
             OrderCode = "AUC-0002",
@@ -356,7 +415,7 @@ public static class DbSeeder
             CreatedAt = now.AddHours(-4)
         };
 
-        // 3) Paid + Delivered (waiting for Finance release, AND has a sample Dispute for Admin & Finance demo!)
+        // คำสั่งซื้อที่ 3: ชำระเงินแล้ว + ผู้ขายส่งมอบแล้ว (Delivered) แต่ยังรอปล่อยเงิน Escrow และมีข้อพิพาทเปิดค้างอยู่เพื่อสาธิตการบล็อกปล่อยเงิน
         var order3 = new OrderPayment
         {
             OrderCode = "AUC-0003",
@@ -381,10 +440,17 @@ public static class DbSeeder
             CreatedAt = now.AddDays(-1)
         };
 
+        // บันทึกคำสั่งซื้อลงฐานข้อมูลก่อนเพื่อให้ได้ OrderPayment.Id สำหรับผูกกับ Dispute และ Notification
         db.OrderPayments.AddRange(order1, order2, order3);
         await db.SaveChangesAsync();
 
-        // Conversations & Messages
+        // --------------------------------------------------------------------
+        // 7. สร้างห้องสนทนาและข้อความแชทตัวอย่าง (Conversations & ChatMessages)
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าบ้านดึงแสดงในหน้าข้อความผ่าน GET /api/chat/conversations
+        //    และดึงรายละเอียดข้อความผ่าน GET /api/chat/conversations/{id}/messages
+        // --------------------------------------------------------------------
+
+        // ห้องแชท 1: สอบถามสภาพมีดก่อนปิดประมูล (แชทปกติ แอดมินไม่มีสิทธิ์เข้าดู)
         var convKnife = new Conversation
         {
             AuctionItemId = knife.Id,
@@ -400,6 +466,7 @@ public static class DbSeeder
             ]
         };
 
+        // ห้องแชท 2: แจ้งแสดงความยินดีหลังชนะประมูลถ้วยชาและเตรียมนัดรับ
         var convTea = new Conversation
         {
             AuctionItemId = closedTea2.Id,
@@ -414,6 +481,7 @@ public static class DbSeeder
             ]
         };
 
+        // ห้องแชท 3: ห้องสนทนาของนาฬิกาไขลานที่มีการแจ้งปัญหาและเปิดข้อพิพาท (แอดมินดูข้อความห้องนี้ได้ผ่านหน้าข้อพิพาท)
         var convClock = new Conversation
         {
             AuctionItemId = closedClock.Id,
@@ -432,7 +500,11 @@ public static class DbSeeder
         db.Conversations.AddRange(convKnife, convTea, convClock);
         await db.SaveChangesAsync();
 
-        // Sample Dispute linked to convClock so Admin can inspect ONLY disputed chats
+        // --------------------------------------------------------------------
+        // 8. สร้างข้อพิพาทตัวอย่าง (Dispute) ผูกกับห้องแชท convClock และคำสั่งซื้อ order3
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] แอดมินตรวจสอบผ่าน GET /api/admin/dashboard และ GET /api/admin/disputes/{id}/messages
+        //    (ออกแบบตามหลักความเป็นส่วนตัว: แอดมินตรวจสอบข้อความแชทได้เฉพาะห้องที่มีข้อพิพาทเท่านั้น)
+        // --------------------------------------------------------------------
         db.Disputes.Add(new Dispute
         {
             ConversationId = convClock.Id,
@@ -444,7 +516,11 @@ public static class DbSeeder
             CreatedAt = now.AddHours(-2)
         });
 
-        // Initial notifications for demo users
+        // --------------------------------------------------------------------
+        // 9. สร้างการแจ้งเตือนเริ่มต้น (Initial Notifications) สำหรับผู้ใช้ตัวอย่าง
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าบ้าน (wwwroot/js/site.js) ดึงไปแสดงที่ไอคอนกระดิ่งและจุดแดงแจ้งเตือน
+        //    ผ่านการ Polling ไปที่ GET /api/notifications/summary (NotificationsController)
+        // --------------------------------------------------------------------
         db.Notifications.AddRange(
             new Notification
             {
@@ -452,7 +528,7 @@ public static class DbSeeder
                 Type = "payment",
                 Title = "ยินดีด้วย! คุณชนะการประมูลถ้วยชาลายครามวินเทจ",
                 Body = "ได้รับส่วนลดซื้อหมวดเดียวกัน 10% เหลือ ฿1,620 คลิกเพื่อชำระเงิน",
-                TargetView = "payments",
+                TargetView = "payments", // คลิกแล้วหน้าบ้านสลับไปหน้าชำระเงินทันที
                 ReferenceId = order2.Id,
                 IsRead = false,
                 CreatedAt = now.AddHours(-4)
@@ -463,7 +539,7 @@ public static class DbSeeder
                 Type = "message",
                 Title = "ข้อความใหม่จาก บ้านชาและครามรัตนา",
                 Body = "ยินดีด้วยนะคะ คุณพิมพ์ชนกชนะถ้วยชาลายครามวินเทจค่ะ ชำระเงินแล้วทักนัดรับได้เลยนะคะ",
-                TargetView = "messages",
+                TargetView = "messages", // คลิกแล้วหน้าบ้านเปิดห้องแชท convTea
                 ReferenceId = convTea.Id,
                 IsRead = false,
                 CreatedAt = now.AddMinutes(-30)
@@ -474,7 +550,7 @@ public static class DbSeeder
                 Type = "message",
                 Title = "ข้อความใหม่จาก คุณพิมพ์ชนก (ผู้ประมูล)",
                 Body = "ขอบคุณค่ะ ถ้ารอบนี้ชนะสะดวกนัดรับวันเสาร์แถวจตุจักรไหมคะ?",
-                TargetView = "messages",
+                TargetView = "messages", // คลิกแล้วหน้าบ้านเปิดห้องแชท convKnife
                 ReferenceId = convKnife.Id,
                 IsRead = false,
                 CreatedAt = now.AddHours(-1)
@@ -485,22 +561,31 @@ public static class DbSeeder
                 Type = "dispute",
                 Title = "มีข้อพิพาทใหม่รอตรวจสอบ",
                 Body = "คุณปกรณ์ นักสะสม แจ้งเรื่อง: สินค้าไม่ตรงตามรายละเอียด (นาฬิกาตั้งโต๊ะไขลานยุค 1965)",
-                TargetView = "admin-disputes",
+                TargetView = "admin-disputes", // คลิกแล้วหน้าบ้านเปิดหน้าจัดการข้อพิพาทของแอดมิน
                 IsRead = false,
                 CreatedAt = now.AddHours(-2)
             }
         );
 
+        // บันทึกข้อพิพาทและการแจ้งเตือนทั้งหมดลงฐานข้อมูล SQLite
         await db.SaveChangesAsync();
     }
 
+    // ------------------------------------------------------------------------
+    // เมธอดช่วยอัปเกรดฐานข้อมูล SQLite รุ่นเก่า (Legacy Database Upgrade) และรัน EF Core Migrations
+    // เหตุผล: ในช่วงแรกของโปรเจกต์อาจสร้างไฟล์ auction.db ด้วย EnsureCreated() ซึ่งไม่มีตาราง __EFMigrationsHistory
+    //         หากรัน MigrateAsync() ทันทีจะชนว่าตาราง Users มีอยู่แล้ว เมธอดนี้จึงช่วยเติมตาราง/คอลัมน์ใหม่ที่ขาด
+    //         แล้วบันทึก Baseline Migration เพื่อให้ใช้งาน EF Core Migrations ต่อได้อย่างราบรื่นโดยไม่เสียข้อมูลเดิม
+    // ------------------------------------------------------------------------
     private static async Task MigrateOrUpgradeLegacyDbAsync(AppDbContext db)
     {
+        // ดึงการเชื่อมต่อระดับต่ำ (DbConnection) ของ SQLite ออกมาตรวจสอบโครงสร้างตารางโดยตรง
         var conn = db.Database.GetDbConnection();
         var shouldClose = conn.State != System.Data.ConnectionState.Open;
         if (shouldClose) await conn.OpenAsync();
         try
         {
+            // ฟังก์ชันย่อยเช็กว่ามีตารางชื่อที่กำหนดอยู่ในฐานข้อมูล SQLite แล้วหรือไม่ (ผ่านตารางระบบ sqlite_master)
             async Task<bool> TableExistsAsync(string name)
             {
                 using var cmd = conn.CreateCommand();
@@ -515,9 +600,11 @@ public static class DbSeeder
             var hasUsers = await TableExistsAsync("Users");
             var hasHistory = await TableExistsAsync("__EFMigrationsHistory");
 
-            // If DB already existed from EnsureCreated() before EF Migrations, sync columns & baseline history once
+            // กรณีพบว่ามีตาราง Users อยู่แล้ว แต่ยังไม่มีตาราง __EFMigrationsHistory (ฐานข้อมูลเก่าจาก EnsureCreated)
+            // ให้ซิงก์ตาราง คอลัมน์ และ Index ใหม่ให้ตรงกับ Schema ปัจจุบัน แล้วสร้าง Baseline History ครั้งเดียว
             if (hasUsers && !hasHistory)
             {
+                // ฟังก์ชันย่อยเช็กคอลัมน์ด้วย PRAGMA table_info และเพิ่มคอลัมน์ใหม่ด้วย ALTER TABLE หากยังไม่มี
                 async Task EnsureColumnAsync(string table, string column, string sqlType)
                 {
                     var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -525,8 +612,10 @@ public static class DbSeeder
                     {
                         p.CommandText = $"PRAGMA table_info(\"{table}\");";
                         using var r = await p.ExecuteReaderAsync();
+                        // คอลัมน์ index 1 ของผลลัพธ์ PRAGMA table_info คือชื่อคอลัมน์ (name)
                         while (await r.ReadAsync()) cols.Add(r.GetString(1));
                     }
+                    // เพิ่มคอลัมน์เฉพาะเมื่อมีตารางนั้นอยู่จริงและยังไม่มีคอลัมน์ดังกล่าว
                     if (cols.Count > 0 && !cols.Contains(column))
                     {
                         using var a = conn.CreateCommand();
@@ -535,6 +624,7 @@ public static class DbSeeder
                     }
                 }
 
+                // สร้างตารางใหม่ที่เพิ่มเข้ามาภายหลัง (Notifications และ AuditLogs) พร้อม Index หากยังไม่มี
                 using (var cmd = conn.CreateCommand())
                 {
                     cmd.CommandText = """
@@ -570,6 +660,7 @@ public static class DbSeeder
                     await cmd.ExecuteNonQueryAsync();
                 }
 
+                // เติมคอลัมน์ใหม่ที่เพิ่มเข้ามาในตารางเดิมทีละตาราง (แชทอ่านล่าสุด, วิธีชำระเงิน/สลิป/เส้นตาย, พร้อมเพย์กลาง, Concurrency Version, ล็อกอิน/รีเซ็ตรหัสผ่าน)
                 await EnsureColumnAsync("Conversations", "BuyerLastReadAt", "TEXT NULL");
                 await EnsureColumnAsync("Conversations", "SellerLastReadAt", "TEXT NULL");
                 await EnsureColumnAsync("OrderPayments", "PaymentMethod", "TEXT NOT NULL DEFAULT 'PlatformEscrow'");
@@ -586,6 +677,8 @@ public static class DbSeeder
                 await EnsureColumnAsync("Users", "PasswordResetToken", "TEXT NULL");
                 await EnsureColumnAsync("Users", "PasswordResetExpiresAt", "TEXT NULL");
 
+                // ปรับ Unique Index ของ OrderPayments ให้รองรับผู้ชนะอันดับถัดไป (AuctionItemId + BuyerId)
+                // และสร้างตาราง __EFMigrationsHistory พร้อมบันทึก Baseline Migration '20261126135143_InitialSchema'
                 using (var idx = conn.CreateCommand())
                 {
                     idx.CommandText = """
@@ -604,9 +697,11 @@ public static class DbSeeder
         }
         finally
         {
+            // ปิดการเชื่อมต่อหากเมธอดนี้เป็นผู้เปิดขึ้นมาเอง เพื่อไม่ให้ Connection ค้าง
             if (shouldClose) await conn.CloseAsync();
         }
 
+        // รัน EF Core Migrations ตามมาตรฐาน (สร้างตารางทั้งหมดหากเป็นฐานข้อมูลใหม่ หรืออัปเดต Migration ในอนาคต)
         await db.Database.MigrateAsync();
     }
 }

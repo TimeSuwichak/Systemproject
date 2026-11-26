@@ -1,19 +1,36 @@
+/* ============================================================================
+   ไฟล์: wwwroot/css/site.css
+   บทบาท: ฝั่งหน้าบ้าน (Frontend — Main Stylesheet)
+   หน้าที่โดยรวม: กำหนดธีมสีโทนกระดาษ/เขียวมอสสไตล์ของสะสมวินเทจ (Vintage Editorial),
+                 โครงสร้างเลย์เอาต์ (Sidebar + Main Content), สไตล์คอมโพเนนต์ทั้งหมด
+                 (การ์ดสินค้า, ตาราง, ฟอร์ม, แชท, แจ้งเตือน, ชำระเงิน QR, Modal)
+                 รวมถึง Responsive Breakpoints และโหมดพิมพ์รายงาน (@media print)
+   การเชื่อมต่อ:
+     - 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] ถูกโหลดผ่าน <link href="~/css/site.css" asp-append-version="true" />
+       ใน Views/Shared/_Layout.cshtml (เสิร์ฟเป็น Static File จาก ASP.NET Core)
+     - ตกแต่งโครงสร้าง HTML คงที่ใน Views/Home/Index.cshtml และ HTML ที่สร้างแบบไดนามิกใน wwwroot/js/site.js
+   ============================================================================ */
+
+/* โหลดฟอนต์ DM Sans (อังกฤษ/ตัวเลข) และ Noto Sans Thai (ภาษาไทย) จาก Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap');
 
+/* ตัวแปรสีหลักของธีม (CSS Custom Properties) เพื่อคุมโทนสีเดียวกันทั้งระบบ */
 :root {
-  --ink: #26332c;
-  --muted: #6f7770;
-  --green: #355a46;
-  --green-dark: #284635;
-  --green-soft: #eaf0e8;
-  --paper: #fbfaf7;
-  --white: #fff;
-  --line: #eae7df;
-  --gold: #b98544;
-  --rose: #a75e49;
-  --blue: #385f7a;
+  --ink: #26332c;        /* สีตัวอักษรหลัก (เขียวเข้มเกือบดำ) */
+  --muted: #6f7770;      /* สีตัวอักษรรอง/คำอธิบาย */
+  --green: #355a46;      /* สีเขียวหลักของแบรนด์ (ปุ่มหลัก, ไอคอน, แอคเซนต์) */
+  --green-dark: #284635; /* สีเขียวเข้มสำหรับสถานะ hover / active */
+  --green-soft: #eaf0e8; /* สีเขียวอ่อนสำหรับพื้นหลังไฮไลต์ */
+  --paper: #fbfaf7;      /* สีพื้นหลังโทนกระดาษครีมอ่อน */
+  --white: #fff;         /* สีขาวสำหรับการ์ดและกล่องข้อความ */
+  --line: #eae7df;       /* สีเส้นขอบบาง (Border/Divider) */
+  --gold: #b98544;       /* สีทองวินเทจสำหรับไอคอน/ส่วนลด */
+  --rose: #a75e49;       /* สีแดงอิฐสำหรับเวลานับถอยหลัง/ปุ่มอันตราย/แจ้งเตือน */
+  --blue: #385f7a;       /* สีน้ำเงินหม่นสำหรับบทบาท Finance และสถานะกำลังตรวจสอบ */
 }
 
+/* ==================== BASE RESET & UTILITIES ==================== */
+/* ตั้งค่าพื้นฐานทุกองค์ประกอบ + คลาสช่วย .hidden (ใช้สลับแสดง/ซ่อนโดย site.js) และ .full-width */
 * { box-sizing: border-box; }
 html { min-width: 340px; min-height: 100%; font-size: 14px; scroll-behavior: smooth; }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: "DM Sans", "Noto Sans Thai", sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
@@ -23,8 +40,11 @@ a { color: inherit; text-decoration: none; }
 .hidden { display: none !important; }
 .full-width { width: 100%; }
 
+/* กล่องห่อหุ้มทั้งแอปใน Index.cshtml (.app-shell) */
 .app-shell { min-height: 100vh; }
 
+/* ==================== SIDEBAR (แถบเมนูด้านซ้าย) ==================== */
+/* ผูกกับ <aside id="sidebar"> ใน Index.cshtml และเมนูที่สร้างแบบไดนามิกใน buildSidebar() ของ site.js */
 /* Sidebar */
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; display: flex; flex-direction: column; width: 256px; padding: 24px 16px 16px; background: #fff; border-right: 1px solid var(--line); overflow-y: auto; transition: transform .22s ease; }
 .sidebar-backdrop { position: fixed; inset: 0; z-index: 25; background: rgba(24,35,28,.45); }
@@ -40,8 +60,10 @@ a { color: inherit; text-decoration: none; }
 .nav-item.active { background: #edf2eb; color: var(--green-dark); font-weight: 600; }
 .nav-icon { display: inline-grid; width: 20px; place-items: center; color: #7e8d83; font-size: 16px; line-height: 1; flex-shrink: 0; }
 .nav-item.active .nav-icon { color: var(--green); }
+/* แบดจ์ตัวเลขด้านขวาเมนู (.nav-count.warn ใช้แสดงจำนวนแชทยังไม่อ่าน #navUnreadMessagesBadge) */
 .nav-count { margin-left: auto; padding: 2px 8px; border-radius: 20px; background: #dfe9dc; color: var(--green); font-size: 11px; font-weight: 600; }
 .nav-count.warn { background: #f8e9e4; color: var(--rose); }
+/* ส่วนล่างของ Sidebar: การ์ดอธิบายระบบนัดรับ + ปุ่มโปรไฟล์ผู้ใช้ (#sidebarAuthArea) */
 .sidebar-bottom { margin-top: 16px; }
 .meetup-note { padding: 13px 13px; border: 1px solid #eee8dc; border-radius: 9px; background: #faf8f2; }
 .meetup-icon { display: inline-block; margin-right: 6px; color: var(--gold); font-size: 15px; }
@@ -54,6 +76,8 @@ a { color: inherit; text-decoration: none; }
 .profile-button small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
 .profile-button .more { margin-left: auto; color: #8c938b; font-size: 16px; }
 
+/* ==================== MAIN CONTENT & TOPBAR ==================== */
+/* พื้นที่เนื้อหาหลักเว้นระยะซ้าย 256px เท่าความกว้าง Sidebar พร้อมแถบด้านบน (.topbar) และป้ายสีแยกตาม 4 บทบาท */
 /* Main & Topbar */
 .main-content { min-height: 100vh; margin-left: 256px; padding: 0 40px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 74px; border-bottom: 1px solid var(--line); }
@@ -70,12 +94,15 @@ a { color: inherit; text-decoration: none; }
 .search-box input::placeholder { color: #9fa39b; }
 .icon-button { position: relative; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: #566358; font-size: 18px; cursor: pointer; }
 .topbar-user { display: flex; align-items: center; gap: 10px; }
+/* ป้ายสีบทบาท (Role Badge): site.js เติมคลาส role-${user.role} ลงใน Topbar, ตาราง Admin และ Demo Cards */
 .role-badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .role-Buyer { background: #e8f1eb; color: #2f5c43; }
 .role-Seller { background: #f6eedf; color: #946328; }
 .role-Admin { background: #f5e7e4; color: #9c4938; }
 .role-Finance { background: #e6eff5; color: #2d5873; }
 
+/* ==================== VIEW PANELS & PAGE HEADINGS ==================== */
+/* กลไกสลับหน้า SPA: ทุก <section class="view-panel"> ใน Index.cshtml จะซ่อนไว้ ยกเว้นตัวที่มี .active จาก switchView() */
 /* View Panels */
 .view-panel { display: none; padding-top: 28px; animation: appear .2s ease; }
 .view-panel.active { display: block; }
@@ -93,6 +120,8 @@ h1, h2, h3, p { margin-top: 0; }
 .date-card small { display: block; color: var(--muted); font-size: 11px; }
 .date-card strong { display: block; font-size: 12px; font-weight: 600; }
 
+/* ==================== BUTTONS (ปุ่มมาตรฐานทุกแบบ) ==================== */
+/* ใช้ร่วมกันทั้งใน Index.cshtml และปุ่มที่สร้างในตาราง/Modal โดย site.js */
 /* Buttons */
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 15px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: .16s ease; white-space: nowrap; }
 .button:hover { transform: translateY(-1px); }
@@ -108,6 +137,8 @@ h1, h2, h3, p { margin-top: 0; }
 .button-outline-light:hover { background: rgba(255,255,255,.16); }
 .button-sm { min-height: 30px; padding: 0 10px; font-size: 11px; }
 
+/* ==================== HERO BANNER (แบนเนอร์หน้าประมูลวันนี้) ==================== */
+/* ตกแต่งแบนเนอร์ใน #view-today พร้อมภาพแจกันโบราณและดวงอาทิตย์ที่วาดด้วย CSS ล้วน (.hero-art) */
 /* Hero */
 .hero-banner { position: relative; display: flex; min-height: 240px; overflow: hidden; align-items: center; margin-top: 22px; padding: 30px 40px; border-radius: 10px; background: #354f40; color: #fff; }
 .hero-banner::before { position: absolute; inset: 0; background: radial-gradient(ellipse at 75% 48%, rgba(199,166,108,.16), transparent 36%), linear-gradient(110deg, transparent 30%, rgba(20,41,30,.2)); content: ""; }
@@ -124,6 +155,8 @@ h1, h2, h3, p { margin-top: 0; }
 .hero-stamp { position: absolute; top: 38px; right: 32px; padding: 7px 10px; border: 1px solid rgba(238,222,193,.47); color: #e8dcc5; font-size: 9px; letter-spacing: 2px; line-height: 1.5; transform: rotate(9deg); }
 .hero-leaf { position: absolute; right: 52%; bottom: 16px; color: #97a582; font-size: 46px; opacity: .55; }
 
+/* ==================== SECTIONS & CATEGORY CHIPS ==================== */
+/* หัวข้อหมวดย่อยและแถบปุ่มหมวดหมู่ (#categoryRow ที่ loadAuctions() สร้างปุ่ม .category-chip ลงไป) */
 /* Sections & Categories */
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 14px; flex-wrap: wrap; }
 .section-heading h2 { margin: 0; color: #2f3e34; font-family: "Noto Sans Thai", sans-serif; font-size: 17px; font-weight: 600; }
@@ -137,12 +170,15 @@ h1, h2, h3, p { margin-top: 0; }
 .category-chip small { color: var(--muted); font-size: 11px; }
 .category-chip small.discount-note { color: #a46e32; font-weight: 600; }
 
+/* ==================== PRODUCTS GRID, LIST VIEW & CARDS ==================== */
+/* การ์ดสินค้าประมูลใน #productGrid และ #savedGrid (สร้างโดย loadAuctions() / loadBuyerDashboard() ใน site.js) */
 /* Products Grid & List View */
 .live-count { display: inline-grid; min-width: 26px; height: 22px; place-items: center; margin-left: 6px; padding: 0 6px; border-radius: 12px; background: #e8efe4; color: #47664c; font: 600 11px "DM Sans", sans-serif; vertical-align: 1px; }
 .sort-controls { display: flex; align-items: center; gap: 6px; }
 .sort-button { padding: 7px 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
 .sort-button.active { background: #e8eee5; color: var(--green-dark); font-weight: 600; }
 .view-toggle { width: 34px; height: 32px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #5f7061; font-size: 16px; cursor: pointer; }
+/* กริดมาตรฐาน 4 คอลัมน์ และโหมดรายการแนวนอน (.list-view) เมื่อกด #viewToggleBtn */
 .product-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .product-grid.list-view { grid-template-columns: 1fr; }
 .product-grid.list-view .product-card { display: grid; grid-template-columns: 220px 1fr; }
@@ -171,6 +207,7 @@ h1, h2, h3, p { margin-top: 0; }
 .bid-button { padding: 7px 11px; border: 1px solid #d5e2d3; border-radius: 5px; background: #f3f7f1; color: var(--green-dark); font-size: 12px; font-weight: 600; cursor: pointer; }
 .bid-button:hover { background: #e5efe3; }
 
+/* กล่องแจ้งสถานะไม่มีข้อมูล (.empty-state) และแถบแนะนำ 3 ขั้นตอนประมูล (.how-it-works) */
 .empty-state { padding: 34px 20px; border: 1px dashed #dcdcd2; border-radius: 8px; color: var(--muted); font-size: 13px; text-align: center; background: #fff; }
 .how-it-works { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; gap: 18px; align-items: center; margin: 28px 0 32px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
 .how-title span, .how-title strong { display: block; }
@@ -182,6 +219,8 @@ h1, h2, h3, p { margin-top: 0; }
 .how-step strong { font-size: 12px; }
 .how-step small { margin-top: 2px; color: var(--muted); font-size: 11px; }
 
+/* ==================== DATA TABLES (ตารางข้อมูลทุกบทบาท) ==================== */
+/* ใช้ร่วมกันในหน้า Buyer, Seller, Admin, Finance และ Audit Log พร้อมรองรับการเลื่อนแนวนอน (.table-wrap) */
 /* Tables */
 .personal-history-heading { margin-top: 30px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -199,6 +238,8 @@ h1, h2, h3, p { margin-top: 0; }
 .table-subline { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
 .table-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* ==================== STATUS PILLS (ป้ายสถานะ) ==================== */
+/* สร้างโดยฟังก์ชัน statusPill(), paymentPill(), meetupPill(), payoutPill() ใน site.js */
 /* Status Pills */
 .status-pill { display: inline-block; padding: 4px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .status-green { background: #e8f2e6; color: #36643a; }
@@ -207,6 +248,8 @@ h1, h2, h3, p { margin-top: 0; }
 .status-blue { background: #e6eff6; color: #2b5a7a; }
 .status-muted { background: #efefef; color: #686d68; }
 
+/* ==================== FORMS, SELLER ASIDE & INFO BANNERS ==================== */
+/* ตกแต่งฟอร์มลงขายสินค้า (#listingForm), สมัครผู้ขาย, ตั้งกติกาการเงิน, ฟอร์มหมวดหมู่แอดมิน และแบนเนอร์แจ้งสถานะ */
 /* Forms & Banners */
 .form-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; align-items: start; }
 .narrow-form { max-width: 680px; }
@@ -234,19 +277,24 @@ h1, h2, h3, p { margin-top: 0; }
 .seller-status i { display: grid; width: 22px; height: 22px; place-items: center; border: 1px solid #e0e0d7; border-radius: 50%; color: var(--muted); font-size: 11px; font-style: normal; flex-shrink: 0; }
 .seller-status i.step-done { border-color: #cde0cb; background: #eaf2e8; color: var(--green); }
 
+/* แบนเนอร์แจ้งเตือน/สถานะ (เหลือง=ทั่วไป, แดง=.banner-error, เขียว=.banner-success) */
 .info-banner { padding: 14px 16px; margin-bottom: 18px; border-radius: 8px; border: 1px solid #e6decb; background: #fbf8ef; color: #6c5527; font-size: 13px; }
 .info-banner.banner-error { border-color: #efd4cb; background: #fcf2ef; color: #8c3d2d; }
 .info-banner.banner-success { border-color: #d3e5cf; background: #f1f7ef; color: #2e5936; }
 .info-banner strong { display: block; margin-bottom: 3px; }
 
+/* ฟอร์มแถวเดียวสำหรับหน้าจัดการหมวดหมู่แอดมิน (#adminCategoryForm) */
 .inline-form-card { display: grid; grid-template-columns: 1.2fr 90px 1.6fr auto; gap: 12px; align-items: end; padding: 16px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
 .inline-form-card .field-label { margin-bottom: 0; }
 .inline-form-actions { display: flex; gap: 8px; }
 
+/* ==================== CHAT / MESSAGING (หน้ากล่องข้อความ) ==================== */
+/* ผูกกับ #view-messages ใน Index.cshtml และฟองข้อความ .chat-bubble ที่สร้างโดย openConversation() ใน site.js */
 /* Chat */
 .chat-layout { display: grid; height: clamp(480px, calc(100vh - 220px), 760px); grid-template-columns: minmax(250px, 34%) 1fr; grid-template-rows: minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
 .conversation-list { display: flex; flex-direction: column; min-height: 0; height: 100%; border-right: 1px solid var(--line); overflow: hidden; }
 .conversation-search { display: flex; height: 52px; flex-shrink: 0; align-items: center; gap: 8px; padding: 0 13px; border-bottom: 1px solid #f0efe9; color: var(--muted); }
+/* รายชื่อห้องแชทแบบเลื่อนขึ้นลงเฉพาะกรอบด้านซ้าย */
 #conversationItems { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .conversation { display: flex; width: 100%; align-items: center; gap: 10px; padding: 13px 12px; border: 0; border-bottom: 1px solid #f3f2ee; background: transparent; text-align: left; cursor: pointer; }
 .conversation:hover { background: #fafaf7; }
@@ -263,6 +311,7 @@ h1, h2, h3, p { margin-top: 0; }
 .chat-header strong, .chat-header small { display: block; }
 .chat-header strong { font-size: 13px; }
 .chat-header small { color: var(--muted); font-size: 11px; }
+/* กล่องแสดงประวัติข้อความแชท (.chat-bubble.received ชิดซ้ายสีขาว, .chat-bubble.sent ชิดขวาสีเขียวอ่อน) */
 .chat-messages { display: flex; flex: 1 1 0; min-height: 0; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 18px; background: #fdfcf9; }
 .chat-bubble { position: relative; min-width: 115px; max-width: 78%; padding: 10px 14px 8px; border-radius: 10px; color: #3e4840; font-size: 13px; line-height: 1.55; word-break: break-word; white-space: pre-wrap; flex-shrink: 0; }
 .chat-bubble .sender-tag { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 3px; white-space: normal; }
@@ -276,6 +325,8 @@ h1, h2, h3, p { margin-top: 0; }
 .chat-compose button { width: 40px; height: 40px; flex-shrink: 0; border: 0; border-radius: 6px; background: var(--green); color: #fff; font-size: 18px; cursor: pointer; }
 .chat-compose button:disabled { opacity: .45; cursor: not-allowed; }
 
+/* ==================== PAYMENTS, STATS CARDS & FOOTER ==================== */
+/* การ์ดรอชำระเงินใน #paymentList, การ์ดสรุปตัวเลข (.admin-stats) สำหรับ Seller/Admin/Finance และส่วนท้ายหน้า (.page-footer) */
 /* Payments & Stats */
 .payment-list { display: grid; gap: 12px; }
 .payment-card { display: flex; align-items: center; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fff; flex-wrap: wrap; }
@@ -292,6 +343,7 @@ h1, h2, h3, p { margin-top: 0; }
 .payment-assurance strong { color: #364339; font-size: 13px; }
 .payment-assurance p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 
+/* กริดการ์ดสถิติ 3 หรือ 4 คอลัมน์ (#sellerFinanceStats, #adminStatsCards, #financeSummaryCards, #financeReportCards) */
 .admin-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
 .admin-stats.stats-4 { grid-template-columns: repeat(4, 1fr); }
 .admin-stats > div { display: flex; flex-direction: column; justify-content: space-between; padding: 16px 18px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
@@ -304,6 +356,8 @@ h1, h2, h3, p { margin-top: 0; }
 .page-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 40px; padding: 16px 0 22px; border-top: 1px solid var(--line); color: #8d9289; font-size: 12px; flex-wrap: wrap; gap: 8px; }
 .page-footer a { color: var(--green); font-weight: 600; }
 
+/* ==================== MODAL DIALOGS (กล่องโต้ตอบรายละเอียดสินค้าและเสนอราคา) ==================== */
+/* ผูกกับ <dialog id="auctionDialog"> ใน Index.cshtml และเนื้อหา .dialog-product ที่สร้างใน openProduct() */
 /* Dialogs */
 .auction-dialog { width: min(720px, calc(100vw - 24px)); max-height: 90vh; overflow-y: auto; padding: 0; border: 0; border-radius: 12px; background: #fff; color: var(--ink); box-shadow: 0 24px 70px rgba(19,31,22,.26); }
 .auction-dialog::backdrop { background: rgba(25,36,28,.52); backdrop-filter: blur(2px); }
@@ -325,6 +379,8 @@ h1, h2, h3, p { margin-top: 0; }
 .dialog-history-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #f0efe9; color: #646e65; font-size: 12px; }
 .dialog-history-row strong { color: #2f4936; }
 
+/* ==================== AUTH DIALOG & ACTION DIALOG ==================== */
+/* ผูกกับ <dialog id="authDialog"> (ล็อกอิน/สมัคร/ลืมรหัส/บัญชีทดลอง) และ <dialog id="actionDialog"> (Modal อเนกประสงค์และดูแชทข้อพิพาท) */
 /* Auth Dialog & Action Dialog */
 .auth-dialog { width: min(560px, calc(100vw - 24px)); }
 .action-dialog { width: min(620px, calc(100vw - 24px)); }
@@ -341,8 +397,11 @@ h1, h2, h3, p { margin-top: 0; }
 .demo-card:hover { border-color: var(--green); background: #f1f6ef; }
 .demo-card strong { display: block; font-size: 12px; color: var(--ink); margin-top: 4px; }
 .demo-card small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+/* กล่องแชทอ่านอย่างเดียวสำหรับแอดมินตรวจสอบเคสข้อพิพาทใน openDisputeInspector() */
 .dispute-chat-box { max-height: 300px; overflow-y: auto; padding: 14px; margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; background: #fcfbf8; display: flex; flex-direction: column; gap: 8px; }
 
+/* ==================== TOAST NOTIFICATIONS (แถบแจ้งเตือนมุมขวาล่าง) ==================== */
+/* ผูกกับ <div id="toastRegion"> ใน Index.cshtml และฟังก์ชัน showToast() ใน site.js */
 /* Toasts */
 .toast-region { position: fixed; z-index: 90; right: 20px; bottom: 20px; display: grid; gap: 8px; }
 .toast { max-width: 360px; padding: 12px 16px; border: 1px solid #d5e5d1; border-radius: 8px; background: #fff; box-shadow: 0 8px 28px rgba(30,46,34,.15); color: #2f5438; font-size: 13px; font-weight: 500; animation: appear .2s ease; }
@@ -350,6 +409,8 @@ h1, h2, h3, p { margin-top: 0; }
 .toast.clickable { cursor: pointer; border-color: #c5d9c3; }
 .toast.clickable:hover { background: #f5faf4; }
 
+/* ==================== NOTIFICATIONS DROPDOWN & UNREAD BADGES ==================== */
+/* ผูกกับ #notifWrapper / #notifDropdown ใน Topbar และตัวนับข้อความยังไม่อ่านใน #conversationItems (อัปเดตโดย pollNotifications()) */
 /* Notifications Dropdown & Badges */
 .notif-wrapper { position: relative; }
 .notif-bell-btn { position: relative; font-size: 16px; }
@@ -372,6 +433,8 @@ h1, h2, h3, p { margin-top: 0; }
 .conversation.has-unread .conversation-copy strong { color: var(--green-dark); font-weight: 700; }
 .conversation.has-unread .conversation-copy small { color: var(--ink); font-weight: 600; }
 
+/* ==================== HYBRID PAYMENT CHECKOUT & SLIP VIEWER ==================== */
+/* ตกแต่งหน้าต่างชำระเงิน 2 รูปแบบ (QR Escrow vs จ่ายตรงผู้ขาย) และพรีวิวภาพสลิป/รูปสินค้าที่สร้างใน openCheckoutModal() / openSlipModal() */
 /* Hybrid Payment Checkout & Slip Viewer */
 .pay-method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .pay-method-card { display: block; padding: 12px 13px; border: 1.5px solid var(--line); border-radius: 9px; background: #faf9f5; cursor: pointer; transition: .15s ease; }
@@ -393,17 +456,22 @@ h1, h2, h3, p { margin-top: 0; }
 .slip-preview-wrap { margin-top: 8px; text-align: center; }
 .slip-preview-img { max-width: 100%; max-height: 240px; border-radius: 8px; border: 1px solid var(--line); object-fit: contain; background: #faf9f5; }
 .slip-full-img { display: block; max-width: 100%; max-height: 460px; margin: 12px auto; border-radius: 8px; border: 1px solid var(--line); object-fit: contain; background: #f8f7f3; }
+/* มือถือขนาดเล็ก: เรียงตัวเลือกวิธีชำระและกล่อง QR เป็น 1 คอลัมน์ */
 @media (max-width: 640px) {
   .pay-method-grid, .qr-panel { grid-template-columns: 1fr; }
 }
 
+/* ==================== RESPONSIVE BREAKPOINTS & PRINT MODE ==================== */
+/* ปรับเลย์เอาต์ตามความกว้างหน้าจอ (แท็บเล็ต 1220px -> มือถือแนวนอน/ลิ้นชักเมนู 960px -> มือถือแนวตั้ง 640px) */
 /* Responsive */
 @media (max-width: 1220px) {
+  /* หน้าจอกลาง: ลดกริดสินค้าจาก 4 เหลือ 3 คอลัมน์ และลดการ์ดสถิติ/ขั้นตอนเหลือ 2 คอลัมน์ */
   .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .admin-stats.stats-4 { grid-template-columns: repeat(2, 1fr); }
   .how-it-works { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 960px) {
+  /* หน้าจอแท็บเล็ต/มือถือ: ซ่อน Sidebar ไว้นอกจอด้านซ้าย แล้วสไลด์เปิดเมื่อมีคลาส .mobile-open */
   .sidebar { transform: translateX(-100%); }
   .sidebar.mobile-open { transform: translateX(0); box-shadow: 0 0 40px rgba(0,0,0,.22); }
   .main-content { margin-left: 0; padding: 0 20px; }
@@ -413,11 +481,13 @@ h1, h2, h3, p { margin-top: 0; }
   .breadcrumbs { display: none; }
   .form-layout { grid-template-columns: 1fr; }
   .inline-form-card { grid-template-columns: 1fr 1fr; }
+  /* หน้าแชทบนจอแคบ: เรียงรายชื่อห้องแชทไว้ด้านบนและหน้าต่างข้อความไว้ด้านล่าง */
   .chat-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); height: auto; }
   .conversation-list { height: auto; max-height: 210px; border-right: 0; border-bottom: 1px solid var(--line); }
   .chat-window { height: clamp(420px, 64vh, 620px); min-height: 0; overflow: hidden; }
 }
 @media (max-width: 640px) {
+  /* หน้าจอมือถือแนวตั้ง: กริดสินค้า 2 คอลัมน์, ซ่อนภาพตกแต่ง Hero และยุบฟอร์ม/Modal เป็น 1 คอลัมน์ */
   .main-content { padding: 0 14px; }
   .search-box { width: 150px; }
   .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -428,6 +498,7 @@ h1, h2, h3, p { margin-top: 0; }
   .field-row, .demo-accounts-grid, .inline-form-card, .dialog-product, .how-it-works, .admin-stats, .admin-stats.stats-4 { grid-template-columns: 1fr; }
   .dialog-image { min-height: 200px; height: 200px; }
 }
+/* โหมดพิมพ์รายงาน (ใช้ร่วมกับปุ่ม #printReportBtn ใน #view-finance-report): ซ่อนเมนูและส่วนที่ไม่จำเป็น */
 @media print {
   .sidebar, .topbar, .report-actions, .page-footer, .toast-region { display: none !important; }
   .main-content { margin: 0; padding: 0; }

@@ -1,15 +1,40 @@
-﻿@{
+﻿@* ============================================================================
+   ไฟล์: Views/Home/Index.cshtml
+   บทบาท: ฝั่งหน้าบ้าน (Frontend — Main Single-Page Application Razor View)
+   หน้าที่โดยรวม: โครงสร้าง HTML หลักของระบบประมูล "ของเก่าเล่าเรื่อง" ทั้งหมดในไฟล์เดียว
+                 แบ่งเป็น Sidebar, Topbar, 16 หน้าจอย่อย (.view-panel) สำหรับ 4 บทบาท
+                 (Buyer, Seller, Admin, Finance) และกล่องโต้ตอบ (Modal Dialogs)
+                 โดยให้ wwwroot/js/site.js เป็นตัวสลับหน้าจอและสื่อสารกับ REST API ทั้งหมด
+   การเชื่อมต่อ:
+     - ถูกเรนเดอร์จากฝั่งหลังบ้าน Controllers/HomeController.cs -> Action Index() (GET / หรือ GET /Home/Index)
+     - แทรกลงใน @RenderBody() ของ Views/Shared/_Layout.cshtml
+     - ตกแต่งด้วย wwwroot/css/site.css และควบคุมตรรกะ/เรียก API ด้วย wwwroot/js/site.js
+   ============================================================================ *@
+@* 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+   HTTP Method & Route: GET / (หรือ GET /Home/Index) -> HomeController.Index()
+   ข้อมูลที่ส่งกลับ: HTML View นี้ถูกห่อด้วย Views/Shared/_Layout.cshtml และโหลด wwwroot/js/site.js เพื่อเริ่มต้นระบบ *@
+@{
+    // กำหนดชื่อหน้าเว็บส่งไปยังแท็ก <title> ใน Views/Shared/_Layout.cshtml
     ViewData["Title"] = "ของเก่าเล่าเรื่อง — ตลาดประมูลของสะสม";
 }
 
+<!-- โครงสร้างหลักของแอป (App Shell): ประกอบด้วยแถบเมนูซ้าย (Sidebar) + พื้นที่เนื้อหาหลัก (Main Content) -->
 <div class="app-shell">
+    <!-- ฉากหลังมืดสำหรับปิดเมนู Sidebar บนหน้าจอมือถือ (ควบคุมด้วย closeMobileDrawer ใน site.js) -->
     <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
+
+    <!-- แถบเมนูนำทางด้านซ้าย (Sidebar) -->
     <aside class="sidebar" id="sidebar">
+        <!-- โลโก้และชื่อแบรนด์ กดเพื่อสลับกลับไปหน้า "ประมูลวันนี้" (view-today) -->
         <a class="brand" href="#" data-view-link="today" aria-label="ของเก่าเล่าเรื่อง หน้าแรก">
             <span class="brand-mark">ก</span>
             <span><strong>ของเก่าเล่าเรื่อง</strong><small>OLD THINGS, NEW STORIES</small></span>
         </a>
 
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+             HTTP Method & Route: GET /api/auth/me -> Controllers/AuthController.cs
+             การผูกข้อมูล: ฟังก์ชัน refreshSession() และ buildSidebar() ใน wwwroot/js/site.js
+             จะอ่านบทบาทผู้ใช้ (Buyer / Seller / Admin / Finance) จาก Auth Cookie แล้วสร้างรายการเมนูภายใน #sidebarNavContainer ใหม่ทั้งหมด -->
         <div id="sidebarNavContainer" class="sidebar-nav-container">
             <div class="sidebar-label">เมนูหลัก</div>
             <nav class="side-nav" aria-label="เมนูหลัก">
@@ -17,12 +42,14 @@
             </nav>
         </div>
 
+        <!-- ส่วนท้ายของ Sidebar: กล่องข้อความสร้างความมั่นใจเรื่องนัดรับ + ปุ่มโปรไฟล์/เข้าสู่ระบบ -->
         <div class="sidebar-bottom">
             <div class="meetup-note">
                 <span class="meetup-icon">⌖</span>
                 <strong>นัดรับอย่างสบายใจ</strong>
                 <p>ตกลงสถานที่และเวลารับสินค้ากับผู้ขายโดยตรง ระบบคุ้มครองเงินจนกว่าจะยืนยันรับของ</p>
             </div>
+            <!-- พื้นที่โปรไฟล์ผู้ใช้ด้านล่าง Sidebar: site.js (buildSidebar) จะอัปเดตชื่อผู้ใช้และบทบาท หรือปุ่มเปิด #authDialog -->
             <div id="sidebarAuthArea">
                 <button class="profile-button" id="openAuthBtn" type="button">
                     <span class="avatar">?</span>
@@ -33,18 +60,32 @@
         </div>
     </aside>
 
+    <!-- พื้นที่เนื้อหาหลักทางขวาของ Sidebar -->
     <main class="main-content">
+        <!-- แถบด้านบน (Topbar): ปุ่มเมนูมือถือ, Breadcrumb, ช่องค้นหา, กระดิ่งแจ้งเตือน และปุ่มบัญชีผู้ใช้ -->
         <header class="topbar">
             <div class="topbar-left">
+                <!-- ปุ่มเปิด/ปิด Sidebar บนหน้าจอแคบ (< 960px) ผูก event ใน site.js -->
                 <button class="icon-button mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="เปิดเมนู">☰</button>
                 <div class="mobile-brand"><span class="brand-mark">ก</span><strong>ของเก่าเล่าเรื่อง</strong></div>
+                <!-- เส้นทางหน้าปัจจุบัน (#pageCrumb อัปเดตโดย switchView() ใน site.js) -->
                 <div class="breadcrumbs"><span>หน้าหลัก</span><span class="crumb-sep">/</span><strong id="pageCrumb">ประมูลวันนี้</strong></div>
             </div>
             <div class="top-actions">
+                <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+                     HTTP Method & Route: GET /api/auctions?search={คำค้น}&categoryId=...&sort=... -> Controllers/AuctionsController.cs
+                     การผูกข้อมูล: site.js ฟังเหตุการณ์ input บน #searchInput (หน่วงเวลา 220ms) แล้วเรียก loadAuctions() ดึงสินค้าที่ตรงคำค้น -->
                 <label class="search-box" id="globalSearchBox">
                     <span>⌕</span>
                     <input id="searchInput" type="search" placeholder="ค้นหาของสะสม..." aria-label="ค้นหาของสะสม">
                 </label>
+
+                <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+                     HTTP Method & Route:
+                       - GET /api/notifications/summary (Polling ทุก 5 วินาทีใน pollNotifications()) -> Controllers/NotificationsController.cs
+                       - POST /api/notifications/read-all (เมื่อกด #markAllReadBtn) -> Controllers/NotificationsController.cs
+                       - POST /api/notifications/{id}/read (เมื่อคลิกรายการแจ้งเตือนใน #notifDropdownList) -> Controllers/NotificationsController.cs
+                     ข้อมูลที่รับ: JSON สรุปจำนวนข้อความ/แจ้งเตือนที่ยังไม่อ่าน (#notifBadge) และรายการแจ้งเตือน (#notifDropdownList) -->
                 <div class="notif-wrapper hidden" id="notifWrapper">
                     <button class="icon-button notif-bell-btn" id="notifBellBtn" type="button" aria-label="การแจ้งเตือน" title="การแจ้งเตือนข้อความและกิจกรรม">
                         <span>🔔</span>
@@ -60,6 +101,12 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+                     HTTP Method & Route:
+                       - POST /api/auth/logout (ปุ่ม #logoutBtn ที่สร้างโดย buildSidebar()) -> Controllers/AuthController.cs
+                       - POST /api/auth/change-password (ปุ่มเปลี่ยนรหัสผ่านเปิด Modal #actionDialog) -> Controllers/AuthController.cs
+                     การทำงาน: แสดงปุ่มเข้าสู่ระบบเมื่อยังไม่ล็อกอิน หรือแสดง Role Badge + ปุ่มเปลี่ยนรหัส/สลับบัญชี/ออกจากระบบ -->
                 <div class="topbar-user" id="topbarUserArea">
                     <button class="button button-primary" id="topLoginBtn" type="button">เข้าสู่ระบบ</button>
                 </div>
@@ -67,6 +114,12 @@
         </header>
 
         <!-- ==================== PUBLIC / BUYER: TODAY ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าประมูลวันนี้ (แสดงเป็นหน้าแรก .active)
+             HTTP Method & Route:
+               - GET /api/auctions?categoryId=...&search=...&sort=... -> Controllers/AuctionsController.cs (GetAuctions)
+               - GET /api/auctions/{id} (เมื่อคลิกการ์ดสินค้า [data-detail]) -> Controllers/AuctionsController.cs (เปิด #auctionDialog)
+               - POST /api/auctions/{id}/save (เมื่อกดปุ่มหัวใจ [data-save]) -> Controllers/AuctionsController.cs (ToggleSave)
+             การผูกข้อมูล: ฟังก์ชัน loadAuctions() ใน wwwroot/js/site.js เติมข้อมูลลง #heroPromoText, #discountHintText, #categoryRow, #productGrid, #liveCount -->
         <section class="view-panel active" id="view-today">
             <div class="today-heading">
                 <div>
@@ -74,22 +127,26 @@
                     <h1>ของดีวันนี้ <span class="heading-period">คัดมาให้คุณ</span></h1>
                     <p class="intro">ทุกชิ้นมีเรื่องราว — เลือกชิ้นที่ใช่ แล้วร่วมประมูลไปด้วยกัน</p>
                 </div>
+                <!-- การ์ดแสดงวันที่ปัจจุบัน (#todayDate ถูกเติมข้อความวันที่ภาษาไทยตอนเปิดเว็บใน site.js) -->
                 <div class="date-card">
                     <span class="date-icon">▦</span>
                     <span><small>วันประมูล</small><strong id="todayDate"></strong></span>
                 </div>
             </div>
 
+            <!-- แบนเนอร์โปรโมตด้านบน (Hero Banner) พร้อมภาพตกแต่งด้วย CSS (.hero-art) -->
             <div class="hero-banner">
                 <div class="hero-copy">
                     <span class="hero-kicker">THE DAILY FINDS · คัดสรรประจำวัน</span>
                     <h2>ของเก่าที่มีเสน่ห์<br>กำลังรอเจ้าของคนใหม่</h2>
+                    <!-- #heroPromoText ถูกอัปเดตเปอร์เซ็นต์ส่วนลดหมวดเดียวกันจริงจาก GlobalSettings ของหลังบ้าน -->
                     <p id="heroPromoText">ชิ้นงานหายากจากนักสะสมทั่วไทย นัดรับได้จริง ทุกการประมูลโปร่งใส พร้อมส่วนลดซื้อหมวดเดียวกัน</p>
                     <div class="hero-actions">
                         <button class="button button-light" type="button" data-scroll="auctionGrid">เลือกดูของวันนี้ <span>→</span></button>
                         <button class="button button-outline-light" type="button" id="heroAuthBtn">เข้าสู่ระบบ / ทดลอง 4 บทบาท</button>
                     </div>
                 </div>
+                <!-- งานศิลปะตกแต่งฝั่งขวาของ Hero (สร้างด้วย CSS Pure Shapes ใน site.css) -->
                 <div class="hero-art" aria-hidden="true">
                     <div class="sun-disc"></div>
                     <div class="hero-vase"></div>
@@ -98,26 +155,33 @@
                 </div>
             </div>
 
+            <!-- ส่วนเลือกกรองตามหมวดหมู่สินค้า (data-category="0" คือดูทั้งหมด) -->
             <div class="section-heading category-heading">
                 <div><h2>เลือกตามหมวดหมู่</h2><p id="discountHintText">ซื้อสินค้าหมวดเดียวกันรับส่วนลดพิเศษอัตโนมัติตอนชำระเงิน</p></div>
                 <button class="text-button" type="button" data-category="0">ดูทั้งหมด <span>→</span></button>
             </div>
+            <!-- คอนเทนเนอร์ปุ่มชิปหมวดหมู่ เติมโดย loadAuctions() จาก data.categories -->
             <div class="category-row" id="categoryRow" aria-label="เลือกหมวดหมู่"></div>
 
+            <!-- หัวข้อรายการสินค้าที่กำลังเปิดประมูล พร้อมปุ่มเรียงลำดับและปุ่มสลับมุมมองกริด/รายการ -->
             <div class="section-heading listing-heading" id="auctionGrid">
                 <div>
                     <h2>กำลังเปิดประมูล <span class="live-count" id="liveCount">00</span></h2>
                     <p>ร่วมประมูลก่อนหมดเวลา แล้วเป็นเจ้าของชิ้นพิเศษ</p>
                 </div>
                 <div class="sort-controls">
+                    <!-- ปุ่มเรียงลำดับส่ง query string sort=ending หรือ sort=newest ไปยัง GET /api/auctions -->
                     <button class="sort-button active" type="button" data-sort="ending">ใกล้หมดเวลา</button>
                     <button class="sort-button" type="button" data-sort="newest">มาใหม่</button>
+                    <!-- สลับคลาส .list-view บน #productGrid -->
                     <button class="view-toggle" id="viewToggleBtn" type="button" aria-label="สลับมุมมองกริดหรือรายการ" title="สลับมุมมอง">▦</button>
                 </div>
             </div>
+            <!-- ตารางการ์ดสินค้าประมูล เติม HTML การ์ดโดย loadAuctions() ใน site.js พร้อมตัวนับถอยหลัง real-time -->
             <div class="product-grid" id="productGrid"></div>
             <div class="empty-state hidden" id="emptyState">ไม่พบสินค้าที่ตรงกับการค้นหา ลองเปลี่ยนคำค้นหรือหมวดหมู่ดูนะ</div>
 
+            <!-- แถบอธิบายขั้นตอนการประมูล 3 ขั้นตอนสำหรับผู้ใช้งานใหม่ -->
             <div class="how-it-works">
                 <div class="how-title"><span>เริ่มสะสมได้ง่ายๆ</span><strong>ประมูลอย่างมั่นใจใน 3 ขั้นตอน</strong></div>
                 <div class="how-step"><span>01</span><div><strong>เลือกของที่ชอบ</strong><small>ดูรายละเอียดและประวัติราคา</small></div></div>
@@ -127,6 +191,12 @@
         </section>
 
         <!-- ==================== BUYER: SAVED & BID HISTORY ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้ารายการที่บันทึกไว้และประวัติการเสนอราคาของผู้ซื้อ
+             HTTP Method & Route:
+               - GET /api/buyer/dashboard -> Controllers/AuctionsController.cs (GetBuyerDashboard)
+               - POST /api/auctions/{id}/save (ปุ่มหัวใจใน #savedGrid) -> Controllers/AuctionsController.cs
+               - GET /api/auctions/{id} (ลิงก์ชื่อสินค้าใน #bidHistoryRows / #savedGrid) -> Controllers/AuctionsController.cs
+             การผูกข้อมูล: loadBuyerDashboard() ใน site.js นำ data.saved และ data.bidHistory มาแสดง -->
         <section class="view-panel" id="view-mybids">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> YOUR COLLECTION</p>
@@ -134,6 +204,7 @@
                 <p class="intro">ของสะสมที่คุณบันทึกไว้และสถานะการเสนอราคาล่าสุดของคุณ</p>
             </div>
             <div class="section-heading"><div><h2>รายการที่บันทึกไว้</h2><p>กดรูปหัวใจเพื่อบันทึกหรือนำออก</p></div></div>
+            <!-- การ์ดสินค้าที่ผู้ซื้อกดหัวใจบันทึกไว้ -->
             <div class="product-grid" id="savedGrid"></div>
             <div class="empty-state" id="savedEmpty">กดรูปหัวใจบนสินค้าที่สนใจ เพื่อบันทึกไว้ที่นี่</div>
 
@@ -141,12 +212,19 @@
             <div class="table-wrap">
                 <table class="data-table">
                     <thead><tr><th>รายการสินค้า</th><th>หมวดหมู่</th><th>ราคาที่คุณเสนอ</th><th>ราคาสูงสุดปัจจุบัน</th><th>สถานะ</th><th>เวลา</th></tr></thead>
+                    <!-- แถวประวัติการบิดทั้งหมดของผู้ใช้ เติมจาก data.bidHistory -->
                     <tbody id="bidHistoryRows"><tr class="empty-row"><td colspan="6">คุณยังไม่มีประวัติการเสนอราคา</td></tr></tbody>
                 </table>
             </div>
         </section>
 
         <!-- ==================== BUYER: PAYMENTS, MEETUPS & WON HISTORY ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าชำระเงิน นัดรับ และประวัติสินค้าที่ชนะประมูล
+             HTTP Method & Route:
+               - GET /api/buyer/dashboard -> Controllers/AuctionsController.cs (ดึง data.orders และ data.paymentConfig)
+               - POST /api/buyer/orders/{id}/pay (ส่ง FormData พร้อมวิธีชำระและไฟล์สลิปจาก Modal openCheckoutModal()) -> Controllers/AuctionsController.cs
+               - POST /api/buyer/orders/{id}/confirm-received (กดปุ่มยืนยันรับของใน #buyerOrdersRows) -> Controllers/AuctionsController.cs
+               - POST /api/chat/start (ปุ่มแชทผู้ขาย) -> Controllers/ChatController.cs -->
         <section class="view-panel" id="view-payments">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> SECURE CHECKOUT & MEETUP</p>
@@ -155,16 +233,19 @@
             </div>
 
             <div class="section-heading"><div><h2>รายการรอชำระเงิน</h2><p>รับส่วนลดอัตโนมัติเมื่อชนะสินค้าในหมวดหมู่เดียวกัน</p></div></div>
+            <!-- การ์ดรายการที่ยังค้างชำระ (Unpaid) กดปุ่มเพื่อเปิด Modal เลือกชำระผ่าน QR ระบบกลาง หรือจ่ายตรงผู้ขาย -->
             <div id="paymentList" class="payment-list"></div>
 
             <div class="section-heading personal-history-heading"><div><h2>ประวัติสินค้าที่ประมูลได้ & การนัดรับ</h2><p>ตรวจสอบวันเวลานัดรับและกดยืนยันเมื่อได้รับของครบถ้วน</p></div></div>
             <div class="table-wrap">
                 <table class="data-table">
                     <thead><tr><th>รหัส / สินค้า</th><th>ผู้ขาย</th><th>ยอดสุทธิ</th><th>สถานะชำระเงิน</th><th>กำหนดนัดรับ</th><th>การดำเนินการ</th></tr></thead>
+                    <!-- ตารางคำสั่งซื้อทั้งหมดที่ผู้ซื้อชนะประมูล เติมจาก data.orders -->
                     <tbody id="buyerOrdersRows"><tr class="empty-row"><td colspan="6">ยังไม่มีประวัติสินค้าที่ประมูลได้</td></tr></tbody>
                 </table>
             </div>
 
+            <!-- กล่องอธิบายระบบชำระเงินแบบไฮบริด 2 รูปแบบ (Escrow vs Direct) -->
             <div class="payment-assurance">
                 <span>✓</span>
                 <div><strong>เลือกชำระได้ 2 รูปแบบอย่างมั่นใจ</strong><p>1) <strong>QR ระบบกลาง (แบบ Shopee):</strong> โอนเข้าบัญชีกลางแนบสลิปให้ฝ่ายการเงินตรวจ เงินจะถูกคุ้มครองจนกว่าคุณจะยืนยันรับของ · 2) <strong>จ่ายตรงให้ผู้ขาย:</strong> โอนหรือจ่ายสดตอนนัดรับแล้วให้ผู้ขายกดยืนยัน</p></div>
@@ -172,12 +253,17 @@
         </section>
 
         <!-- ==================== BUYER: APPLY TO BE SELLER ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าสมัครอัปเกรดบัญชีผู้ซื้อเป็นผู้ขาย
+             HTTP Method & Route: POST /api/seller/apply -> Controllers/SellerController.cs
+             ข้อมูลที่ส่ง: JSON { shopName, phone, bankAccount, sellerBio } จากฟอร์ม #buyerApplySellerForm
+             ข้อมูลที่รับ: JSON ข้อความยืนยันและข้อมูล user ล่าสุด (สถานะ Pending รอ Admin อนุมัติ) -->
         <section class="view-panel" id="view-apply-seller">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> BECOME A SELLER</p>
                 <h1>สมัครเป็นผู้ขาย (Seller)</h1>
                 <p class="intro">ส่งข้อมูลร้านและบัญชีรับเงินเพื่อให้แอดมินตรวจสอบอนุมัติ</p>
             </div>
+            <!-- แบนเนอร์แสดงสถานะใบสมัคร (Pending / Rejected) สร้างโดย renderBuyerApplySeller() ใน site.js -->
             <div id="buyerApplySellerStatus"></div>
             <form class="listing-form narrow-form" id="buyerApplySellerForm">
                 <div class="form-card">
@@ -194,6 +280,12 @@
         </section>
 
         <!-- ==================== BUYER & SELLER: MESSAGES ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้ากล่องข้อความแชทระหว่างผู้ซื้อกับผู้ขาย
+             HTTP Method & Route:
+               - GET /api/chat/conversations (โหลดรายการห้องแชทลง #conversationItems) -> Controllers/ChatController.cs
+               - GET /api/chat/conversations/{id}/messages (โหลดข้อความลง #chatMessages และ #chatHeader) -> Controllers/ChatController.cs
+               - POST /api/chat/conversations/{id}/messages (ส่ง JSON { body } จาก #chatForm) -> Controllers/ChatController.cs
+               - POST /api/chat/conversations/{id}/dispute (ปุ่มแจ้งข้อพิพาทใน #chatHeader เปิด Modal ส่งเรื่องให้ Admin) -> Controllers/ChatController.cs -->
         <section class="view-panel" id="view-messages">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> TALK & MEET</p>
@@ -201,10 +293,12 @@
                 <p class="intro">คุยรายละเอียดสินค้าและนัดรับโดยตรง หากพบปัญหาสามารถแจ้งข้อพิพาทให้แอดมินตรวจสอบได้</p>
             </div>
             <div class="chat-layout">
+                <!-- แถบซ้าย: ช่องค้นหาบทสนทนา + รายชื่อห้องแชททั้งหมด -->
                 <aside class="conversation-list" id="conversationListPanel">
                     <div class="conversation-search"><span>⌕</span><input id="convSearchInput" type="search" placeholder="ค้นหาบทสนทนา..."></div>
                     <div id="conversationItems"></div>
                 </aside>
+                <!-- แถบขวา: หัวข้อห้องแชท, ประวัติข้อความ และฟอร์มส่งข้อความ -->
                 <div class="chat-window">
                     <div class="chat-header" id="chatHeader">
                         <span class="chat-avatar">?</span>
@@ -213,6 +307,7 @@
                     <div class="chat-messages" id="chatMessages">
                         <div class="empty-state">เลือกห้องแชทเพื่อเริ่มต้นสนทนา</div>
                     </div>
+                    <!-- ฟอร์มพิมพ์ส่งข้อความ (ปลดล็อก disabled เมื่อเลือกห้องแชทแล้ว) -->
                     <form class="chat-compose" id="chatForm">
                         <input id="chatInput" placeholder="พิมพ์ข้อความ..." autocomplete="off" aria-label="พิมพ์ข้อความ" disabled>
                         <button type="submit" id="chatSendBtn" aria-label="ส่งข้อความ" disabled>↑</button>
@@ -222,6 +317,13 @@
         </section>
 
         <!-- ==================== SELLER: LISTINGS & APPLICATION ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] พื้นที่ผู้ขาย: ลงขายสินค้าและจัดการสินค้าของฉัน
+             HTTP Method & Route:
+               - GET /api/seller/dashboard (ดึงสถานะผู้ขาย, รายการสินค้า และสรุปยอด) -> Controllers/SellerController.cs
+               - POST /api/seller/apply (ฟอร์มส่งใบสมัครใหม่ #sellerReapplyForm เมื่อถูกปฏิเสธ) -> Controllers/SellerController.cs
+               - POST /api/seller/upload-image (อัปโหลดรูปผ่าน FormData จาก #listingImageFile) -> Controllers/SellerController.cs
+               - POST /api/seller/listings (ส่ง JSON สร้างรายการประมูลใหม่จาก #listingForm) -> Controllers/SellerController.cs
+               - PUT /api/seller/listings/{id} และ DELETE /api/seller/listings/{id} (ปุ่มแก้ไข/ยกเลิกใน #sellerRows) -> Controllers/SellerController.cs -->
         <section class="view-panel" id="view-sell">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> SELLER WORKSPACE</p>
@@ -229,8 +331,10 @@
                 <p class="intro">ส่งสินค้าเข้าประมูล ติดตามสถานะการอนุมัติ และดูประวัติการเสนอราคาของสินค้าตัวเอง</p>
             </div>
 
+            <!-- แบนเนอร์แจ้งสถานะการอนุมัติผู้ขาย (Approved / Pending / Rejected) เติมโดย loadSellerDashboard() -->
             <div id="sellerApprovalBanner"></div>
 
+            <!-- กล่องฟอร์มยื่นใบสมัครผู้ขายอีกครั้ง (จะแสดงเฉพาะกรณี sellerStatus === "Rejected") -->
             <div id="sellerReapplyBox" class="hidden">
                 <form class="listing-form narrow-form" id="sellerReapplyForm">
                     <div class="form-card">
@@ -246,17 +350,21 @@
                 </form>
             </div>
 
+            <!-- โครงสร้างฟอร์มลงขายสินค้า (แสดงเมื่อผู้ขายได้รับการอนุมัติ Approved แล้ว) -->
             <div class="form-layout" id="sellerListingFormWrap">
                 <form class="listing-form" id="listingForm">
+                    <!-- ขั้นตอน 01: กรอกข้อมูลรายละเอียดสินค้าและอัปโหลดภาพ -->
                     <div class="form-card">
                         <div class="form-card-heading"><span class="form-step">01</span><div><h2>รายละเอียดสินค้า</h2><p>เล่าเรื่องของสะสมชิ้นนี้ให้ผู้ประมูลรู้จัก</p></div></div>
                         <label class="field-label">ชื่อสินค้า <span>*</span><input name="name" required maxlength="100" placeholder="เช่น มีดครัวญี่ปุ่นตีมือ รุ่นปี 1970"></label>
                         <div class="field-row">
+                            <!-- ตัวเลือกหมวดหมู่ #listingCategorySelect เติมจาก cachedCategories (GET /api/auctions) -->
                             <label class="field-label">หมวดหมู่ <span>*</span><select name="categoryId" id="listingCategorySelect" required></select></label>
                             <label class="field-label">สภาพสินค้า <span>*</span><select name="condition" required><option value="">เลือกสภาพ</option><option>ดีมาก — เก็บสะสม</option><option>ดี — มีร่องรอยตามอายุ</option><option>ผ่านการใช้งาน</option></select></label>
                         </div>
                         <label class="field-label">รายละเอียดและประวัติ <span>*</span><textarea name="description" rows="4" required placeholder="ที่มา อายุโดยประมาณ วัสดุ และตำหนิ (ถ้ามี)"></textarea></label>
                         <div class="field-row">
+                            <!-- เมื่อเลือกไฟล์ใน #listingImageFile จะอัปโหลดทันทีไปยัง POST /api/seller/upload-image แล้วนำ URL มาใส่ใน #listingImageUrlInput -->
                             <label class="field-label">อัปโหลดรูปสินค้าจากเครื่อง
                                 <input type="file" id="listingImageFile" accept=".jpg,.jpeg,.png,.webp,image/*">
                                 <small class="field-hint">รองรับ .jpg/.png/.webp ไม่เกิน 5 MB</small>
@@ -266,23 +374,28 @@
                                 <small class="field-hint">เว้นว่างได้ ระบบจะใช้ภาพเริ่มต้นให้</small>
                             </label>
                         </div>
+                        <!-- พื้นที่พรีวิวรูปสินค้าที่เพิ่งอัปโหลด -->
                         <div class="slip-preview-wrap hidden" id="listingImagePreviewWrap" style="margin-bottom:12px;">
                             <img id="listingImagePreview" class="slip-preview-img" alt="ตัวอย่างรูปสินค้า">
                         </div>
                     </div>
+                    <!-- ขั้นตอน 02: ตั้งค่าราคาเริ่มต้น, ขั้นต่ำการบิด และเวลาเริ่ม-สิ้นสุดประมูล -->
                     <div class="form-card">
                         <div class="form-card-heading"><span class="form-step">02</span><div><h2>ตั้งค่าการประมูล</h2><p>กำหนดราคาเริ่มต้น ขั้นต่ำ และช่วงเวลาที่เปิดประมูล</p></div></div>
                         <div class="field-row">
                             <label class="field-label">ราคาเริ่มต้น (บาท) <span>*</span><input name="startPrice" type="number" min="1" step="1" required placeholder="เช่น 500"></label>
+                            <!-- ค่า min ของ #listingMinIncrement และข้อความ #sellerMinBidHint ถูกกำหนดตามกติกาของฝ่าย Finance -->
                             <label class="field-label">ขั้นต่ำต่อครั้ง (บาท) <input name="minIncrement" id="listingMinIncrement" type="number" min="1" step="1" value="50"><small class="field-hint" id="sellerMinBidHint">ขั้นต่ำตามกติกาฝ่ายการเงิน</small></label>
                         </div>
                         <div class="field-row">
+                            <!-- ค่าเริ่มต้นวันเวลาถูกกำหนดโดย initListingDates() ใน site.js และแปลงเป็น UTC ISO ก่อนส่ง API -->
                             <label class="field-label">เริ่มประมูล <span>*</span><input name="startAt" type="datetime-local" required></label>
                             <label class="field-label">สิ้นสุดประมูล <span>*</span><input name="endAt" type="datetime-local" required></label>
                         </div>
                         <button class="button button-primary submit-listing" type="submit">ส่งให้แอดมินตรวจสอบ <span>→</span></button>
                     </div>
                 </form>
+                <!-- แถบคำแนะนำและขั้นตอนการขายด้านขวาของฟอร์ม -->
                 <aside class="seller-aside">
                     <div class="seller-tip">
                         <span class="tip-icon">✦</span>
@@ -303,6 +416,7 @@
                 </aside>
             </div>
 
+            <!-- ตารางรายการสินค้าทั้งหมดของผู้ขาย พร้อมปุ่มดูประวัติบิด, แก้ไข และยกเลิก -->
             <div class="section-heading personal-history-heading"><div><h2>สินค้าของฉัน</h2><p>ตรวจสอบสถานะอนุมัติ เหตุผลที่ถูกปฏิเสธ และประวัติการเสนอราคาของแต่ละชิ้น</p></div></div>
             <div class="table-wrap">
                 <table class="data-table">
@@ -313,12 +427,19 @@
         </section>
 
         <!-- ==================== SELLER: MEETUPS & SALES / PAYOUTS ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้านัดรับ ยอดขาย และสถานะรับเงินของผู้ขาย
+             HTTP Method & Route:
+               - GET /api/seller/dashboard (ดึง data.summary ลง #sellerFinanceStats และ data.orders ลง #sellerOrdersRows) -> Controllers/SellerController.cs
+               - POST /api/seller/orders/{id}/verify-payment (ยืนยัน/ปฏิเสธการจ่ายตรงจากผู้ซื้อ) -> Controllers/SellerController.cs
+               - POST /api/seller/orders/{id}/meetup (บันทึกวันเวลาและสถานที่นัดรับผ่าน Modal) -> Controllers/SellerController.cs
+               - POST /api/seller/orders/{id}/deliver (ยืนยันว่าส่งมอบสินค้าแล้ว) -> Controllers/SellerController.cs -->
         <section class="view-panel" id="view-seller-orders">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> SALES & MEETUP</p>
                 <h1>นัดรับ ยอดขาย และสถานะการจ่ายเงิน</h1>
                 <p class="intro">กำหนดสถานที่นัดรับ ยืนยันการส่งมอบ และติดตามยอดโอนสุทธิจากฝ่ายการเงิน</p>
             </div>
+            <!-- การ์ดสถิติการเงินผู้ขาย 4 ช่อง (ยอดขายรวม, ค่าธรรมเนียม, ได้รับโอนแล้ว, รอปล่อยเงิน) -->
             <div class="admin-stats stats-4" id="sellerFinanceStats"></div>
             <div class="table-wrap">
                 <table class="data-table">
@@ -329,14 +450,21 @@
         </section>
 
         <!-- ==================== ADMIN: SELLER & PRODUCT APPROVALS ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าแอดมิน: อนุมัติผู้ขายและตรวจสอบสินค้าก่อนเปิดประมูล
+             HTTP Method & Route:
+               - GET /api/admin/dashboard (ดึงสถิติ, ใบสมัครผู้ขาย และสินค้ารออนุมัติ) -> Controllers/AdminController.cs
+               - POST /api/admin/sellers/{id}/review (ส่ง JSON { approve, reason } อนุมัติ/ปฏิเสธผู้ขาย) -> Controllers/AdminController.cs
+               - POST /api/admin/auctions/{id}/review (ส่ง JSON { approve, reason } อนุมัติ/ปฏิเสธสินค้า) -> Controllers/AdminController.cs -->
         <section class="view-panel" id="view-admin-approvals">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> ADMIN MODERATION</p>
                 <h1>อนุมัติผู้ขาย & ตรวจสอบสินค้า</h1>
                 <p class="intro">ตรวจสอบใบสมัครผู้ขายและรายการสินค้าก่อนเปิดประมูล (ระบุเหตุผลได้เมื่อปฏิเสธ)</p>
             </div>
+            <!-- การ์ดสรุปตัวเลขงานค้างของแอดมิน 4 ช่อง เติมโดย loadAdminDashboard() -->
             <div class="admin-stats stats-4" id="adminStatsCards"></div>
 
+            <!-- ตารางใบสมัครผู้ขายที่รอการตรวจสอบ KYC -->
             <div class="section-heading"><div><h2>ใบสมัครผู้ขายรออนุมัติ</h2><p>ตรวจสอบชื่อร้าน เบอร์ติดต่อ และบัญชีรับเงิน</p></div><span class="admin-tag">SELLER KYC</span></div>
             <div class="table-wrap">
                 <table class="data-table">
@@ -345,6 +473,7 @@
                 </table>
             </div>
 
+            <!-- ตารางสินค้าที่ผู้ขายส่งเข้ามาและรอแอดมินอนุมัติขึ้นหน้าร้าน -->
             <div class="section-heading personal-history-heading"><div><h2>สินค้ารออนุมัติ</h2><p>ตรวจสอบรายละเอียด ภาพถ่าย และช่วงเวลาประมูล</p></div><span class="admin-tag">LISTING REVIEW</span></div>
             <div class="table-wrap">
                 <table class="data-table">
@@ -355,6 +484,10 @@
         </section>
 
         <!-- ==================== ADMIN: USER MANAGEMENT ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าแอดมิน: จัดการบัญชีผู้ใช้ (ระงับ / ปลดระงับ)
+             HTTP Method & Route:
+               - GET /api/admin/dashboard (เติมข้อมูลรายชื่อผู้ใช้ลง #adminUsersRows) -> Controllers/AdminController.cs
+               - POST /api/admin/users/{id}/suspend (ส่ง JSON { suspend, reason } ระงับหรือปลดระงับบัญชี) -> Controllers/AdminController.cs -->
         <section class="view-panel" id="view-admin-users">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> USER MANAGEMENT</p>
@@ -370,12 +503,19 @@
         </section>
 
         <!-- ==================== ADMIN: CATEGORIES ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าแอดมิน: เพิ่ม แก้ไข ปิดใช้งาน หรือลบหมวดหมู่สินค้า
+             HTTP Method & Route:
+               - GET /api/admin/dashboard (เติมตาราง #adminCategoriesRows) -> Controllers/AdminController.cs
+               - POST /api/admin/categories (เพิ่มหมวดหมู่ใหม่จาก #adminCategoryForm เมื่อ input[name=id] ว่าง) -> Controllers/AdminController.cs
+               - PUT /api/admin/categories/{id} (แก้ไขหมวดหมู่เดิมเมื่อมีค่า id) -> Controllers/AdminController.cs
+               - DELETE /api/admin/categories/{id} (ลบหรือปิดใช้งานหมวดหมู่) -> Controllers/AdminController.cs -->
         <section class="view-panel" id="view-admin-categories">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> CATEGORY MANAGEMENT</p>
                 <h1>จัดการหมวดหมู่สินค้า</h1>
                 <p class="intro">เพิ่ม แก้ไข หรือปิดการใช้งานหมวดหมู่ของสะสม</p>
             </div>
+            <!-- ฟอร์มแถวเดียวสำหรับเพิ่มหรือแก้ไขหมวดหมู่ (ใช้ hidden input name="id" แยกโหมดเพิ่ม/แก้ไข) -->
             <form class="inline-form-card" id="adminCategoryForm">
                 <input type="hidden" name="id" value="">
                 <label class="field-label">ชื่อหมวดหมู่ <span>*</span><input name="name" required maxlength="60" placeholder="เช่น นาฬิกาโบราณ"></label>
@@ -395,6 +535,11 @@
         </section>
 
         <!-- ==================== ADMIN: DISPUTES (CHAT ONLY FOR REPORTED CASES) ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าแอดมิน: ตรวจสอบและไกล่เกลี่ยข้อพิพาท
+             HTTP Method & Route:
+               - GET /api/admin/dashboard (เติมรายการข้อพิพาทลง #adminDisputesRows) -> Controllers/AdminController.cs
+               - GET /api/admin/disputes/{id}/messages (เมื่อกดปุ่มตรวจสอบแชท จะเปิด Modal อ่านประวัติแชทเฉพาะเคสที่มีข้อพิพาท) -> Controllers/AdminController.cs
+               - POST /api/admin/disputes/{id}/update (บันทึกสถานะ Open/Investigating/Resolved และบันทึกแอดมิน) -> Controllers/AdminController.cs -->
         <section class="view-panel" id="view-admin-disputes">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> DISPUTE RESOLUTION</p>
@@ -410,6 +555,8 @@
         </section>
 
         <!-- ==================== ADMIN: READ-ONLY WINNERS ARCHIVE ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าแอดมิน: ดูประวัติผู้ชนะประมูลแบบอ่านอย่างเดียว (แยกอำนาจการเงินให้ Finance)
+             HTTP Method & Route: GET /api/admin/dashboard (ดึง data.winnersReadOnly ลง #adminWinnersRows) -> Controllers/AdminController.cs -->
         <section class="view-panel" id="view-admin-winners">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> AUCTION ARCHIVE · READ ONLY</p>
@@ -425,12 +572,19 @@
         </section>
 
         <!-- ==================== FINANCE: ALL PAYMENTS, RELEASE & REFUND ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าฝ่ายการเงิน: ตรวจสลิป ปล่อยเงินให้ผู้ขาย และคืนเงินให้ผู้ซื้อ
+             HTTP Method & Route:
+               - GET /api/finance/dashboard (เติมการ์ด #financeSummaryCards และตาราง #financeOrdersRows) -> Controllers/FinanceController.cs
+               - POST /api/finance/orders/{id}/verify-payment (ยืนยัน/ปฏิเสธสลิปโอนเข้าระบบกลาง) -> Controllers/FinanceController.cs
+               - POST /api/finance/orders/{id}/release (ปล่อยยอดสุทธิให้ผู้ขาย) -> Controllers/FinanceController.cs
+               - POST /api/finance/orders/{id}/refund (คืนเงินให้ผู้ซื้อ) -> Controllers/FinanceController.cs -->
         <section class="view-panel" id="view-finance-payments">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> FINANCE OPERATIONS</p>
                 <h1>จัดการชำระเงิน ปล่อยเงิน และคืนเงิน</h1>
                 <p class="intro">ตรวจสอบยอดชำระทั้งหมด ปล่อยเงินให้ผู้ขายหลังยืนยันส่งมอบ/รับของ หรือคืนเงินให้ผู้ซื้อกรณีมีปัญหา</p>
             </div>
+            <!-- การ์ดสรุปยอดการเงินรวม 4 ช่อง เติมโดย loadFinanceDashboard() -->
             <div class="admin-stats stats-4" id="financeSummaryCards"></div>
             <div class="table-wrap">
                 <table class="data-table">
@@ -441,6 +595,11 @@
         </section>
 
         <!-- ==================== FINANCE: RULES & SETTINGS ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าฝ่ายการเงิน: ตั้งกติกาส่วนลด ค่าธรรมเนียม ขั้นต่ำการบิด และบัญชีพร้อมเพย์กลาง
+             HTTP Method & Route:
+               - GET /api/finance/dashboard (เติมค่าตั้งต้นลงช่อง input ใน #financeRulesForm) -> Controllers/FinanceController.cs
+               - PUT /api/finance/settings (ส่ง JSON กติกาใหม่เมื่อกดบันทึกฟอร์ม) -> Controllers/FinanceController.cs
+             ข้อมูลที่ส่ง: JSON { sameCategoryDiscountPercent, platformFeePercent, globalMinBidIncrement, platformPromptPayId, platformAccountName } -->
         <section class="view-panel" id="view-finance-rules">
             <div class="page-heading">
                 <p class="eyebrow"><span class="eyebrow-line"></span> PRICING & RULES</p>
@@ -476,6 +635,10 @@
         </section>
 
         <!-- ==================== FINANCE: WINNERS & SALES REPORT ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าฝ่ายการเงิน: รายงานยอดขายและส่งออก CSV
+             HTTP Method & Route:
+               - GET /api/finance/dashboard (เติมการ์ด #financeReportCards และตาราง #financeReportRows) -> Controllers/FinanceController.cs
+               - GET /api/finance/report/csv (ลิงก์ดาวน์โหลดไฟล์ CSV โดยตรงจากหลังบ้าน) -> Controllers/FinanceController.cs -->
         <section class="view-panel" id="view-finance-report">
             <div class="page-heading">
                 <div>
@@ -484,7 +647,9 @@
                     <p class="intro">สรุปรายได้ ค่าธรรมเนียม ส่วนลด และดาวน์โหลดรายงานยอดขายเป็นไฟล์ CSV</p>
                 </div>
                 <div class="report-actions">
+                    <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน] GET /api/finance/report/csv (ดาวน์โหลดไฟล์ text/csv จาก FinanceController) -->
                     <a class="button button-primary" href="/api/finance/report/csv" download>ดาวน์โหลดรายงาน CSV ↓</a>
+                    <!-- ปุ่มพิมพ์รายงาน สั่ง window.print() ใน site.js (ใช้คู่กับ CSS print media query ใน site.css) -->
                     <button class="button button-secondary" type="button" id="printReportBtn">พิมพ์รายงาน</button>
                 </div>
             </div>
@@ -498,6 +663,9 @@
         </section>
 
         <!-- ==================== ADMIN & FINANCE: AUDIT LOGS ==================== -->
+        <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] หน้าบันทึกประวัติการทำงาน (Audit Trail สำหรับ Admin และ Finance)
+             HTTP Method & Route: GET /api/audit-logs?role={all|Admin|Finance} -> Controllers/AuditLogsController.cs
+             การผูกข้อมูล: loadAuditLogs() ใน site.js ดึงรายการ Log และเติมลง #auditLogRows เมื่อเปิดหน้าหรือกดปุ่ม [data-audit-filter] -->
         <section class="view-panel" id="view-audit-logs">
             <div class="page-heading">
                 <div>
@@ -505,6 +673,7 @@
                     <h1>บันทึกประวัติการทำงาน (Audit Log)</h1>
                     <p class="intro">ตรวจสอบประวัติการอนุมัติ ปฏิเสธ ระงับบัญชี ตรวจสลิป ปล่อยเงิน คืนเงิน และแก้กติกาทั้งหมด</p>
                 </div>
+                <!-- ปุ่มตัวกรองบทบาทผู้ดำเนินการ ส่งค่า roleFilter ไปยัง query string ของ GET /api/audit-logs -->
                 <div class="sort-controls">
                     <button class="sort-button active" type="button" data-audit-filter="all">ทั้งหมด</button>
                     <button class="sort-button" type="button" data-audit-filter="Admin">Admin</button>
@@ -519,6 +688,7 @@
             </div>
         </section>
 
+        <!-- ส่วนท้ายหน้าเว็บ (Footer) แสดงชื่อระบบและลิงก์กลับหน้าประมูลวันนี้ -->
         <footer class="page-footer">
             <span>© 2569 ของเก่าเล่าเรื่อง</span>
             <span>ระบบประมูลของสะสมครบวงจร · SQLite + ASP.NET Core</span>
@@ -527,21 +697,36 @@
     </main>
 </div>
 
+<!-- ==================== MODAL DIALOGS & TOASTS ==================== -->
+<!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] กล่องโต้ตอบรายละเอียดสินค้าและฟอร์มเสนอราคา (Bid)
+     HTTP Method & Route:
+       - GET /api/auctions/{id} (ฟังก์ชัน openProduct() เติมรายละเอียดสินค้าและประวัติการบิดลง #dialogContent) -> Controllers/AuctionsController.cs
+       - POST /api/auctions/{id}/bid (ส่ง JSON { amount } เมื่อกด submit ฟอร์ม #bidForm ภายในกล่องนี้) -> Controllers/AuctionsController.cs
+       - POST /api/chat/start (ปุ่ม "แชทกับผู้ขาย" ภายในกล่องนี้) -> Controllers/ChatController.cs -->
 <!-- Product Detail & Bid Dialog -->
 <dialog class="auction-dialog" id="auctionDialog">
     <form method="dialog"><button class="dialog-close" aria-label="ปิด">×</button></form>
     <div id="dialogContent"></div>
 </dialog>
 
+<!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] กล่องโต้ตอบยืนยันตัวตน (เข้าสู่ระบบ / สมัครสมาชิก / ลืมรหัสผ่าน)
+     HTTP Method & Route (ทั้งหมดอยู่ที่ Controllers/AuthController.cs):
+       - POST /api/auth/login (ฟอร์ม #loginForm หรือปุ่มทดลองบัญชี #demoAccountsGrid -> รับ Auth Cookie)
+       - GET /api/auth/demo-accounts (โหลดบัญชีทดสอบในโหมด Development ลง #demoAccountsGrid)
+       - POST /api/auth/forgot-password (ฟอร์ม #forgotPasswordForm -> ขอรหัสรีเซ็ต 6 หลัก)
+       - POST /api/auth/reset-password (ฟอร์ม #resetPasswordForm -> ยืนยันตั้งรหัสผ่านใหม่)
+       - POST /api/auth/register (ฟอร์ม #registerForm -> สมัคร Buyer หรือ Seller และรับ Auth Cookie) -->
 <!-- Auth Login / Register Dialog -->
 <dialog class="auction-dialog auth-dialog" id="authDialog">
     <form method="dialog"><button class="dialog-close" aria-label="ปิด">×</button></form>
     <div class="auth-modal-body">
+        <!-- แถบแท็บสลับระหว่าง "เข้าสู่ระบบ" และ "สมัครสมาชิก" -->
         <div class="auth-tabs">
             <button type="button" class="auth-tab active" data-auth-tab="login">เข้าสู่ระบบ</button>
             <button type="button" class="auth-tab" data-auth-tab="register">สมัครสมาชิก</button>
         </div>
 
+        <!-- แท็บ 1: เข้าสู่ระบบ (#loginForm) + ปุ่มทดลอง 4 บทบาทในโหมด Development -->
         <div id="authTabLogin">
             <h2 class="auth-title">เข้าสู่ระบบ ของเก่าเล่าเรื่อง</h2>
             <p class="auth-subtitle">รองรับ 4 บทบาท: ผู้ประมูล, ผู้ขาย, แอดมิน และฝ่ายการเงิน</p>
@@ -553,12 +738,14 @@
             <div style="text-align:right;margin-top:8px;">
                 <button type="button" class="text-button" data-auth-tab="forgot">ลืมรหัสผ่าน?</button>
             </div>
+            <!-- ส่วนบัญชีทดสอบด่วน: site.js จะซ่อนส่วนนี้หาก GET /api/auth/demo-accounts คืนค่าว่าง (เช่นบน Production) -->
             <div id="demoAccountsSection">
                 <div class="demo-divider"><span>หรือทดลองเข้าสู่ระบบด่วน (Development เท่านั้น · รหัสผ่าน 123456)</span></div>
                 <div class="demo-accounts-grid" id="demoAccountsGrid"></div>
             </div>
         </div>
 
+        <!-- แท็บ 2: ลืมรหัสผ่านและตั้งรหัสผ่านใหม่ด้วยรหัส 6 หลัก -->
         <div id="authTabForgot" class="hidden">
             <h2 class="auth-title">ลืมรหัสผ่าน / ตั้งรหัสผ่านใหม่</h2>
             <p class="auth-subtitle">กรอกอีเมลเพื่อรับรหัสรีเซ็ต 6 หลัก (ใช้งานได้ภายใน 15 นาที)</p>
@@ -566,6 +753,7 @@
                 <label class="field-label">อีเมลบัญชีของคุณ <span>*</span><input name="email" type="email" required placeholder="name@example.com"></label>
                 <button class="button button-secondary full-width" type="submit">ขอรหัสรีเซ็ต 6 หลัก</button>
             </form>
+            <!-- แสดงรหัสรีเซ็ตอัตโนมัติในโหมด Development (#forgotDevNotice) -->
             <div id="forgotDevNotice" class="info-banner hidden" style="margin-top:12px;"></div>
             <form id="resetPasswordForm" class="auth-form" style="margin-top:14px;">
                 <label class="field-label">อีเมล <span>*</span><input name="email" type="email" required placeholder="name@example.com"></label>
@@ -580,11 +768,13 @@
             </div>
         </div>
 
+        <!-- แท็บ 3: สมัครสมาชิกใหม่ (เลือกบทบาท Buyer หรือ Seller) -->
         <div id="authTabRegister" class="hidden">
             <h2 class="auth-title">สร้างบัญชีใหม่</h2>
             <p class="auth-subtitle">เลือกสมัครเป็นผู้ประมูล (ใช้งานได้ทันที) หรือผู้ขาย (รอแอดมินอนุมัติ)</p>
             <form id="registerForm" class="auth-form">
                 <label class="field-label">ประเภทบัญชี <span>*</span>
+                    <!-- เมื่อเปลี่ยนเป็น Seller, site.js จะแสดง #regSellerFields และบังคับกรอกข้อมูลร้าน -->
                     <select name="role" id="regRoleSelect">
                         <option value="Buyer">ผู้ประมูล (Buyer) — ประมูลและซื้อของสะสม</option>
                         <option value="Seller">ผู้ขาย (Seller) — นำของมาประมูล (รอ Admin อนุมัติ)</option>
@@ -595,6 +785,7 @@
                     <label class="field-label">อีเมล <span>*</span><input name="email" type="email" required placeholder="you@example.com"></label>
                     <label class="field-label">รหัสผ่าน (6+ ตัวอักษร) <span>*</span><input name="password" type="password" minlength="6" required></label>
                 </div>
+                <!-- ฟิลด์เพิ่มเติมเฉพาะผู้สมัครเป็นผู้ขาย (ซ่อนไว้เมื่อเลือก Buyer) -->
                 <div id="regSellerFields" class="hidden">
                     <label class="field-label">ชื่อร้านค้า <span>*</span><input name="shopName" maxlength="100" placeholder="เช่น เรือนสะสมโบราณ"></label>
                     <div class="field-row">
@@ -609,14 +800,26 @@
     </div>
 </dialog>
 
+<!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] กล่องโต้ตอบอเนกประสงค์ (#actionDialog)
+     การทำงาน: wwwroot/js/site.js สร้าง HTML ฟอร์ม/รายละเอียดแบบไดนามิกลงใน #actionDialogContent สำหรับงานต่างๆ เช่น
+       - ชำระเงิน & อัปโหลดสลิป (POST /api/buyer/orders/{id}/pay) และดูภาพสลิปขนาดใหญ่
+       - เปลี่ยนรหัสผ่าน (POST /api/auth/change-password)
+       - แก้ไขสินค้า (PUT /api/seller/listings/{id}), ดูประวัติบิด, กำหนดนัดรับ (POST /api/seller/orders/{id}/meetup)
+       - แจ้งข้อพิพาท (POST /api/chat/conversations/{id}/dispute) และแอดมินตรวจแชทข้อพิพาท (GET/POST /api/admin/disputes/{id}/*)
+       - ระบุเหตุผลการปฏิเสธ/ระงับบัญชี/ปล่อยเงิน/คืนเงิน (Admin & Finance APIs) -->
 <!-- Generic Action / Detail Dialog (Reject reason, Suspend, Meetup, Dispute Chat, Bid History) -->
 <dialog class="auction-dialog action-dialog" id="actionDialog">
     <form method="dialog"><button class="dialog-close" aria-label="ปิด">×</button></form>
     <div id="actionDialogContent" class="action-dialog-body"></div>
 </dialog>
 
+<!-- พื้นที่แสดงข้อความแจ้งเตือนแบบลอยมุมขวาล่าง (Toast Notifications) ควบคุมโดย showToast() ใน site.js -->
 <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 
+@* 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+   HTTP Method & Route: GET /js/site.js?v=... (เสิร์ฟไฟล์ Static จาก wwwroot/js/site.js)
+   การทำงาน: @section Scripts จะถูกนำไปแทรกที่ @await RenderSectionAsync("Scripts") ท้าย <body> ใน Views/Shared/_Layout.cshtml
+   โดย site.js คือสคริปต์ศูนย์กลางฝั่งหน้าบ้านที่เรียก fetch() ไปยัง REST API ทั้งหมด (/api/*) *@
 @section Scripts {
     <script src="~/js/site.js" asp-append-version="true"></script>
 }

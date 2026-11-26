@@ -1,13 +1,37 @@
-﻿<!DOCTYPE html>
+﻿@* ============================================================================
+   ไฟล์: Views/Shared/_Layout.cshtml
+   บทบาท: ฝั่งหน้าบ้าน (Frontend — Shared Master Layout)
+   หน้าที่โดยรวม: เป็นโครงสร้าง HTML หลัก (<!DOCTYPE html>, <head>, <body>) ที่ห่อหุ้ม
+                 ทุกหน้า View ของแอปพลิเคชัน โดยโหลดไฟล์ CSS หลัก และจัดวางพื้นที่สำหรับ
+                 เนื้อหาของแต่ละหน้า (@RenderBody) และสคริปต์ประจำหน้า (@RenderSectionAsync)
+   การเชื่อมต่อ:
+     - ถูกกำหนดให้เป็น Layout เริ่มต้นจาก Views/_ViewStart.cshtml
+     - รับเนื้อหาจาก Views/Home/Index.cshtml (ผ่าน HomeController.Index()) และ Views/Shared/Error.cshtml
+     - โหลดสไตล์จาก wwwroot/css/site.css และโหลดสคริปต์จาก @section Scripts (wwwroot/js/site.js)
+   ============================================================================ *@
+<!DOCTYPE html>
 <html lang="th">
 <head>
+    @* กำหนดชุดอักขระ UTF-8 เพื่อรองรับภาษาไทย และ Viewport สำหรับหน้าจอมือถือ (Responsive) *@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    @* ดึงชื่อแท็บเบราว์เซอร์จาก ViewData["Title"] ที่แต่ละ View กำหนดไว้ (เช่น Index.cshtml / Error.cshtml) *@
     <title>@ViewData["Title"]</title>
+    <!-- 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+         HTTP Method & Route: GET /css/site.css?v=... (เสิร์ฟไฟล์ Static จาก ASP.NET Core Static Files Middleware)
+         ต้นทาง -> ปลายทาง: Views/Shared/_Layout.cshtml -> wwwroot/css/site.css
+         ข้อมูลที่รับ: ไฟล์ CSS หลักของทั้งเว็บ โดย asp-append-version="true" จะแนบแฮชเวอร์ชันเพื่อล้างแคชอัตโนมัติเมื่อไฟล์เปลี่ยน -->
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
 <body>
+    @* 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+       HTTP Method & Route: GET / (หรือ GET /Home/Index) -> HomeController.Index() คืนค่า HTML View (Views/Home/Index.cshtml)
+                            GET /Home/Error -> HomeController.Error() คืนค่า HTML View (Views/Shared/Error.cshtml)
+       การทำงาน: @RenderBody() จะแทรกเนื้อหา HTML ทั้งหมดของ View ลูก (เช่น Index.cshtml) ลงในตำแหน่งนี้ *@
     @RenderBody()
+    @* 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+       การทำงาน: แทรกบล็อก @section Scripts ของแต่ละ View (เช่น <script src="~/js/site.js"> ใน Views/Home/Index.cshtml)
+       หมายเหตุ: required: false ทำให้ View ที่ไม่มี @section Scripts (เช่น Error.cshtml) ยังคงเรนเดอร์ได้โดยไม่ error *@
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

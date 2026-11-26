@@ -1,3 +1,14 @@
-﻿@using AppProject
+﻿@* ============================================================================
+   ไฟล์: Views/_ViewImports.cshtml
+   บทบาท: ฝั่งหน้าบ้าน (Frontend — Razor View Imports & Tag Helpers)
+   หน้าที่โดยรวม: นำเข้า (Import) Namespace และเปิดใช้งาน ASP.NET Core Tag Helpers
+                 ให้ไฟล์ .cshtml ทุกไฟล์ในโฟลเดอร์ Views/ ใช้งานได้โดยไม่ต้องประกาศซ้ำ
+   การเชื่อมต่อ: เชื่อมไปยังโมเดลใน AppProject.Models (เช่น ErrorViewModel) และ
+                 Tag Helpers (เช่น asp-append-version ใน _Layout.cshtml และ Index.cshtml)
+   ============================================================================ *@
+@* นำเข้า Namespace หลักของโปรเจกต์ *@
+@using AppProject
+@* นำเข้า Namespace ของ Models เพื่อให้ View อ้างถึงคลาส Model เช่น ErrorViewModel ได้โดยตรง *@
 @using AppProject.Models
+@* เปิดใช้งาน MVC Tag Helpers ทั้งหมด (เช่น asp-append-version สำหรับป้องกันแคชไฟล์ CSS/JS) *@
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers

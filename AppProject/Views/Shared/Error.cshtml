@@ -1,11 +1,27 @@
-﻿@model ErrorViewModel
+﻿@* ============================================================================
+   ไฟล์: Views/Shared/Error.cshtml
+   บทบาท: ฝั่งหน้าบ้าน (Frontend — Error Razor View)
+   หน้าที่โดยรวม: แสดงหน้าแจ้งข้อผิดพลาดของระบบเมื่อเกิด Exception ที่ไม่ได้จัดการในฝั่ง Server
+                 พร้อมแสดง Request ID สำหรับช่วยนักพัฒนาไล่ตรวจสอบ Log
+   การเชื่อมต่อ:
+     - รับข้อมูล Model (ErrorViewModel) จาก Backend: HomeController.Error()
+     - แสดงผลภายในโครงสร้างหลักของ Views/Shared/_Layout.cshtml
+   ============================================================================ *@
+@* 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน]
+   HTTP Method & Route: GET /Home/Error (ถูกเรียกโดย ExceptionHandler Middleware ใน Program.cs เมื่อเกิดข้อผิดพลาด)
+   ฝั่งหลังบ้านที่ส่งข้อมูล: Controllers/HomeController.cs -> Action Error()
+   ข้อมูลที่ส่งมา: Strongly-typed Model ประเภท ErrorViewModel (ประกอบด้วย RequestId และ ShowRequestId) *@
+@model ErrorViewModel
 @{
+    // กำหนดชื่อหน้าเว็บในแท็บเบราว์เซอร์ ส่งไปยัง <title> ใน _Layout.cshtml
     ViewData["Title"] = "Error";
 }
 
+<!-- หัวข้อแจ้งเตือนข้อผิดพลาดทั่วไปสำหรับผู้ใช้ -->
 <h1 class="text-danger">Error.</h1>
 <h2 class="text-danger">An error occurred while processing your request.</h2>
 
+@* ตรวจสอบว่ามี RequestId ส่งมาจากหลังบ้านหรือไม่ หากมีให้แสดงรหัสอ้างอิงคำขอ *@
 @if (Model.ShowRequestId)
 {
     <p>
@@ -13,6 +29,7 @@
     </p>
 }
 
+<!-- คำแนะนำสำหรับนักพัฒนาเกี่ยวกับโหมด Development (ไม่ควรเปิดใช้บน Production) -->
 <h3>Development Mode</h3>
 <p>
     Swapping to <strong>Development</strong> environment will display more detailed information about the error that occurred.

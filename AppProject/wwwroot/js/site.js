@@ -1,6 +1,32 @@
+/**
+ * ============================================================================
+ * ไฟล์: AppProject/wwwroot/js/site.js
+ * บทบาท: ฝั่งหน้าบ้าน (Frontend - Main Client-Side SPA Controller)
+ * ============================================================================
+ * หน้าที่โดยรวม:
+ * - เป็นสคริปต์หลักเพียงไฟล์เดียวที่ควบคุมการทำงานของหน้าเว็บทั้งหมดในรูปแบบ
+ *   SPA (Single Page Application) สำหรับระบบประมูลของสะสม "OldThings / ของเก่าเล่าเรื่อง"
+ * - ถูกโหลดจากหน้า `Views/Home/Index.cshtml` (ผ่าน Layout หรือ script tag)
+ * - จัดการสถานะผู้ใช้ (Session / Role ทั้ง 4 บทบาท: Buyer, Seller, Admin, Finance),
+ *   การสลับหน้าจอ (View Panels) โดยไม่ต้องรีโหลดหน้าเว็บ, การเรนเดอร์ตาราง/การ์ด/Modal,
+ *   ระบบแชทและการแจ้งเตือนแบบ Polling ทุก 5 วินาที รวมถึงตัวนับเวลาถอยหลัง (Countdown)
+ *
+ * การเชื่อมต่อกับไฟล์/เลเยอร์อื่น:
+ * - เชื่อมกับหน้า HTML/Razor: `Views/Home/Index.cshtml` (อ้างอิง DOM id, form, dialog, data-* attributes)
+ * - เชื่อมกับสไตล์ชีต: `wwwroot/css/site.css` (สลับ class เช่น .active, .hidden, .list-view, .status-pill)
+ * - เชื่อมกับฝั่งหลังบ้าน (ASP.NET Core Web API Controllers):
+ *   สื่อสารผ่านฟังก์ชันกลาง `api(url, options)` ที่ครอบ `fetch()` และแนบ Cookie Authentication
+ *   (`credentials: "same-origin"`) ไปยัง Controllers ได้แก่:
+ *   AuthController, AuctionsController, SellerController, ChatController,
+ *   AdminController, FinanceController, NotificationsController, AuditLogsController
+ * ============================================================================
+ */
 (() => {
+  // ==================== 1. ค่าคงที่และแผนที่ข้อความ (CONSTANTS & LOOKUP MAPS) ====================
+  // รูปภาพสำรองกรณี URL รูปสินค้าหรือรูปสลิปเสียหรือไม่ถูกต้อง
   const imageFallback = "https://images.unsplash.com/photo-1577083552431-6e5fd01aa342?auto=format&fit=crop&w=800&q=80";
 
+  // แปลงชื่อ Role จากฝั่งหลังบ้าน (ภาษาอังกฤษ) เป็นป้ายชื่อภาษาไทยสำหรับแสดงผลบน UI
   const roleLabels = {
     Buyer: "ผู้ประมูล",
     Seller: "ผู้ขาย",
@@ -8,6 +34,7 @@
     Finance: "การเงิน"
   };
 
+  // แผนที่ชื่อหัวข้อ (Breadcrumb / Page Title) ของแต่ละหน้าจอ (View Panel) ใน SPA
   const pageTitles = {
     today: "ประมูลวันนี้",
     mybids: "รายการที่สนใจ & ประวัติบิด",
@@ -27,31 +54,40 @@
     "audit-logs": "บันทึกประวัติการทำงาน (Audit Log)"
   };
 
-  let currentUser = null;
-  let globalSettings = { sameCategoryDiscountPercent: 10, platformFeePercent: 5, globalMinBidIncrement: 50 };
-  let activeView = "today";
-  let activeCategoryId = 0;
-  let sortMode = "ending";
-  let searchTerm = "";
-  let listViewMode = false;
-  let liveProducts = [];
-  let cachedCategories = [];
-  let sellerListingsCache = [];
-  let buyerOrdersCache = [];
-  let buyerPaymentConfig = { platformPromptPayId: "081-999-8888", platformAccountName: "บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)" };
-  let conversationsCache = [];
-  let activeConversationId = null;
-  let selectedProductId = null;
-  let demoAccountsCache = [];
-  let unreadMessagesCount = 0;
-  let lastNotifiedMessageId = null;
-  let notifPollTimer = null;
+  // ==================== 2. สถานะส่วนกลางของแอปฝั่งหน้าบ้าน (GLOBAL CLIENT STATE) ====================
+  let currentUser = null; // ข้อมูลผู้ใช้ที่ล็อกอินอยู่ (ได้จาก GET /api/auth/me) หรือ null หากยังไม่เข้าสู่ระบบ
+  let globalSettings = { sameCategoryDiscountPercent: 10, platformFeePercent: 5, globalMinBidIncrement: 50 }; // กติการะบบล่าสุดจากฝ่ายการเงิน
+  let activeView = "today"; // ชื่อ view ปัจจุบันที่กำลังเปิดแสดงอยู่ (ตรงกับ id="view-{activeView}")
+  let activeCategoryId = 0; // รหัสหมวดหมู่ที่เลือกกรองในหน้าประมูลวันนี้ (0 = แสดงทั้งหมด)
+  let sortMode = "ending"; // โหมดเรียงลำดับสินค้า ("ending", "newest", "price_asc", "price_desc" ฯลฯ)
+  let searchTerm = ""; // คำค้นหาจากช่องค้นหาด้านบน (Global Search)
+  let listViewMode = false; // สลับการแสดงผลการ์ดสินค้าแบบ Grid (false) หรือ List (true)
+  let liveProducts = []; // แคชรายการสินค้าประมูลที่โหลดมาล่าสุด
+  let cachedCategories = []; // แคชหมวดหมู่สินค้า (ใช้ซ้ำในฟอร์มลงขาย/แก้ไขสินค้าเพื่อลดการยิง API)
+  let sellerListingsCache = []; // แคชสินค้าที่ผู้ขายลงขายไว้ (ใช้เปิด Modal แก้ไขและดูประวัติบิด)
+  let buyerOrdersCache = []; // แคชคำสั่งซื้อที่ผู้ซื้อชนะประมูล (ใช้เปิด Modal ชำระเงิน)
+  let buyerPaymentConfig = { platformPromptPayId: "081-999-8888", platformAccountName: "บจก. ของเก่าเล่าเรื่อง (บัญชีกลาง)" }; // ข้อมูลบัญชีกลาง Escrow สำหรับสร้าง QR
+  let conversationsCache = []; // แคชรายการห้องแชททั้งหมดของผู้ใช้ปัจจุบัน
+  let activeConversationId = null; // รหัสห้องแชทที่กำลังเปิดอ่านอยู่
+  let selectedProductId = null; // รหัสสินค้าที่กำลังเปิดดูใน Modal รายละเอียดสินค้า (ใช้ตอนส่งฟอร์มเสนอราคา)
+  let demoAccountsCache = []; // แคชบัญชีทดลอง 4 บทบาท (โหลดจาก GET /api/auth/demo-accounts)
+  let unreadMessagesCount = 0; // จำนวนข้อความแชทที่ยังไม่อ่าน (แสดงเป็น Badge บนเมนู Sidebar)
+  let lastNotifiedMessageId = null; // รหัสข้อความล่าสุดที่แจ้งเตือนไปแล้ว เพื่อตรวจจับข้อความเข้าใหม่แบบ Real-time
+  let notifPollTimer = null; // ตัวเก็บ ID ของ setInterval สำหรับ Polling แจ้งเตือนทุก 5 วินาที
 
-  const toastRegion = document.getElementById("toastRegion");
-  const auctionDialog = document.getElementById("auctionDialog");
-  const authDialog = document.getElementById("authDialog");
-  const actionDialog = document.getElementById("actionDialog");
+  // ==================== 3. การอ้างอิง DOM หลักที่ใช้ร่วมกัน (SHARED DOM REFERENCES) ====================
+  const toastRegion = document.getElementById("toastRegion"); // พื้นที่แสดงข้อความแจ้งเตือนแบบ Toast มุมจอ
+  const auctionDialog = document.getElementById("auctionDialog"); // <dialog> แสดงรายละเอียดสินค้าและฟอร์มเสนอราคา
+  const authDialog = document.getElementById("authDialog"); // <dialog> สำหรับเข้าสู่ระบบ สมัครสมาชิก และลืมรหัสผ่าน
+  const actionDialog = document.getElementById("actionDialog"); // <dialog> อเนกประสงค์ (จ่ายเงิน, ดูสลิป, แก้ไขสินค้า, กรอกเหตุผล, ตรวจข้อพิพาท)
 
+  // ==================== 4. ฟังก์ชันช่วยเหลือทั่วไป (UTILITY HELPERS) ====================
+  /**
+   * แสดงข้อความแจ้งเตือนชั่วคราว (Toast Notification) บนหน้าจอ
+   * @param {string} message - ข้อความที่ต้องการแสดง
+   * @param {boolean} isError - true หากเป็นข้อความแจ้งข้อผิดพลาด (แสดงธีมสีแดง)
+   * @param {Function|null} onClick - callback เมื่อผู้ใช้คลิกที่ Toast (เช่น คลิกแล้วเปิดห้องแชท)
+   */
   function showToast(message, isError = false, onClick = null) {
     const toast = document.createElement("div");
     toast.className = `toast${isError ? " error" : ""}${onClick ? " clickable" : ""}`;
@@ -63,15 +99,24 @@
       });
     }
     toastRegion.append(toast);
+    // ตั้งเวลาลบ Toast อัตโนมัติ (ถ้าคลิกได้จะให้อยู่นานกว่าเล็กน้อย 6 วินาที, ปกติ 3.8 วินาที)
     window.setTimeout(() => toast.remove(), onClick ? 6000 : 3800);
   }
 
+  /**
+   * ป้องกันช่องโหว่ XSS (Cross-Site Scripting) โดยแปลงอักขระพิเศษของ HTML
+   * ก่อนนำข้อมูลจากผู้ใช้หรือ API ไปแทรกใน Template Literal (`innerHTML`)
+   */
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, ch => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     })[ch]);
   }
 
+  /**
+   * ตรวจสอบความปลอดภัยของ URL รูปภาพ อนุญาตเฉพาะโปรโตคอล http: และ https:
+   * (ป้องกัน javascript: URL) หากไม่ถูกต้องจะคืนรูปภาพสำรอง (imageFallback)
+   */
   function safeImageUrl(value) {
     try {
       const url = new URL(value || "", window.location.origin);
@@ -81,10 +126,17 @@
     }
   }
 
+  /**
+   * จัดรูปแบบตัวเลขเป็นสกุลเงินบาทไทย เช่น ฿1,250.5
+   */
   function money(value) {
     return `฿${Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 })}`;
   }
 
+  /**
+   * แปลงสตริงวันเวลา ISO จากฝั่งหลังบ้าน (.NET DateTime) ให้เป็นอ็อบเจกต์ Date แบบ UTC
+   * หากสตริงไม่มีตัวระบุ Timezone (Z หรือ +07:00) จะต่อท้าย "Z" เพื่อบังคับตีความเป็น UTC ก่อนแปลงเป็นเวลาท้องถิ่น
+   */
   function parseUtcDate(iso) {
     if (!iso) return new Date(NaN);
     const s = String(iso).trim();
@@ -92,6 +144,9 @@
     return new Date(hasTz ? s : `${s}Z`);
   }
 
+  /**
+   * จัดรูปแบบวันและเวลาภาษาไทยแบบครบถ้วน เช่น "27 พ.ย. 69 14:30"
+   */
   function formatDateTime(iso) {
     if (!iso) return "-";
     const d = parseUtcDate(iso);
@@ -101,6 +156,9 @@
     }).format(d);
   }
 
+  /**
+   * จัดรูปแบบวันที่ภาษาไทยแบบสั้น (ไม่แสดงเวลา) เช่น "27 พ.ย. 69"
+   */
   function formatDateShort(iso) {
     if (!iso) return "-";
     const d = parseUtcDate(iso);
@@ -108,6 +166,12 @@
     return new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short", year: "2-digit" }).format(d);
   }
 
+  /**
+   * คำนวณเวลาคงเหลือจนถึงเวลาปิดประมูล (endAtIso) เพื่อแสดงบนตัวนับถอยหลัง
+   * - ถ้าเกินเวลาแล้วคืน "ปิดประมูลแล้ว"
+   * - ถ้าเหลือตั้งแต่ 24 ชม. ขึ้นไปแสดงเป็น "X วัน Y ชม."
+   * - ถ้าน้อยกว่า 24 ชม. แสดงเป็น "HH:MM:SS"
+   */
   function remainingText(endAtIso) {
     const diffSec = Math.floor((parseUtcDate(endAtIso).getTime() - Date.now()) / 1000);
     if (Number.isNaN(diffSec) || diffSec <= 0) return "ปิดประมูลแล้ว";
@@ -118,11 +182,25 @@
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   }
 
+  // ============================================================================
+  // 🔗 [จุดเชื่อมต่อ หน้าบ้าน <-> หลังบ้าน] จุดเชื่อมต่อหลัก (Central HTTP Bridge)
+  // ============================================================================
+  // ฟังก์ชันกลาง `api(url, options)` คือสะพานเชื่อมต่อหลักเพียงจุดเดียวระหว่างฝั่งหน้าบ้าน (site.js)
+  // กับฝั่งหลังบ้าน (ASP.NET Core Web API Controllers ภายใต้เส้นทาง `/api/...`)
+  // หลักการทำงาน:
+  // 1. กำหนด Header `Content-Type: application/json` อัตโนมัติเมื่อส่ง body ที่ไม่ใช่ FormData
+  //    (กรณีส่ง FormData สำหรับอัปโหลดรูปภาพ/สลิป จะปล่อยให้ Browser ตั้ง multipart/form-data เอง)
+  // 2. เรียก `fetch(url, ...)` พร้อม `credentials: "same-origin"` เพื่อส่ง Auth Cookie ของ ASP.NET Core
+  //    แนบไปยืนยันตัวตนกับหลังบ้านทุกคำขอ (Cookie Authentication)
+  // 3. แปลง Response text เป็น JSON อย่างปลอดภัย (ไม่พังหากหลังบ้านคืนค่าว่าง)
+  // 4. หาก HTTP Status ไม่ใช่ 2xx (`!res.ok`) จะดึงข้อความ `data.message` จากหลังบ้านมาโยนเป็น Error
+  //    ให้ผู้เรียกนำไปแสดงใน Toast ต่อไป
   async function api(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (options.body && !(options.body instanceof FormData)) {
       headers["Content-Type"] = "application/json";
     }
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน] ยิง HTTP Request จริงผ่าน Fetch API พร้อมแนบ Cookie ยืนยันตัวตน
     const res = await fetch(url, { ...options, headers, credentials: "same-origin" });
     const text = await res.text();
     let data = null;
@@ -134,15 +212,25 @@
     return data;
   }
 
+  // ==================== 5. ฟังก์ชันช่วยสร้าง UI, ป้ายสถานะ และ MODAL ชำระเงิน ====================
+  /**
+   * เปิด HTML5 `<dialog>` อย่างปลอดภัย (ป้องกัน Error กรณีเรียก showModal() ซ้ำตอนเปิดอยู่แล้ว)
+   */
   function openDialogSafe(dialog) {
     if (!dialog.open) dialog.showModal();
   }
 
+  /**
+   * ปิดแถบเมนูด้านข้าง (Sidebar Drawer) บนหน้าจอมือถือและซ่อนฉากหลังมืด (Backdrop)
+   */
   function closeMobileDrawer() {
     document.getElementById("sidebar").classList.remove("mobile-open");
     document.getElementById("sidebarBackdrop").classList.add("hidden");
   }
 
+  /**
+   * สร้างป้ายสถานะ HTML (Status Pill) ตามธีมสี: green, pending, red, blue, muted
+   */
   function statusPill(type, text) {
     const map = {
       green: "status-green",
@@ -154,6 +242,9 @@
     return `<span class="status-pill ${map[type] || "status-muted"}">${escapeHtml(text)}</span>`;
   }
 
+  /**
+   * แปลงสถานะการนัดรับ/ส่งมอบสินค้า (`NotScheduled`, `Scheduled`, `Delivered`, `Completed`) เป็นป้ายภาษาไทย
+   */
   function meetupPill(status) {
     switch (status) {
       case "Completed": return statusPill("green", "ผู้ซื้อยืนยันรับของแล้ว");
@@ -163,10 +254,17 @@
     }
   }
 
+  /**
+   * แปลงรหัสวิธีชำระเงินเป็นข้อความภาษาไทย (`DirectToSeller` vs `PlatformEscrow`)
+   */
   function paymentMethodLabel(method) {
     return method === "DirectToSeller" ? "จ่ายตรงผู้ขาย" : "QR ระบบกลาง (Escrow)";
   }
 
+  /**
+   * แปลงสถานะการชำระเงิน (`Unpaid`, `PendingVerification`, `Paid`, `Refunded`, `Cancelled`)
+   * เป็นป้ายสถานะ โดยแยกข้อความกรณีรอตรวจสลิปฝ่ายการเงิน vs รอผู้ขายยืนยันจ่ายตรง
+   */
   function paymentPill(status, method) {
     switch (status) {
       case "Paid": return statusPill("green", "ยืนยันชำระเงินแล้ว");
@@ -178,6 +276,9 @@
     }
   }
 
+  /**
+   * แปลงสถานะการปล่อยเงิน/โอนเงินให้ผู้ขาย (`Pending`, `Released`, `DirectSettled`, `Refunded`, `Cancelled`)
+   */
   function payoutPill(status) {
     switch (status) {
       case "Released": return statusPill("green", "ปล่อยเงินให้ผู้ขายแล้ว");
@@ -188,13 +289,19 @@
     }
   }
 
+  /**
+   * สร้างภาพ QR Code จำลองแบบ SVG (Deterministic) จากข้อความ Seed (เลขพร้อมเพย์|รหัสออเดอร์|ยอดเงิน)
+   * เพื่อให้แต่ละคำสั่งซื้อมีลวดลาย QR เฉพาะตัวในหน้าชำระเงินระบบกลาง (Escrow) โดยไม่ต้องพึ่งไลบรารีภายนอก
+   */
   function buildPromptPayQrSvg(seedText) {
-    const size = 21;
+    const size = 21; // ขนาดตาราง QR รุ่น 1 (21x21 โมดูล)
+    // คำนวณค่า Hash เริ่มต้นแบบ FNV-1a จาก seedText
     let hash = 2166136261;
     for (let i = 0; i < seedText.length; i++) {
       hash ^= seedText.charCodeAt(i);
       hash = Math.imul(hash, 16777619) >>> 0;
     }
+    // ตรวจว่าเป็นตำแหน่งกรอบสี่เหลี่ยมจับมุม 3 มุม (Finder Patterns) หรือไม่
     const isFinder = (r, c) =>
       (r < 7 && c < 7) || (r < 7 && c >= size - 7) || (r >= size - 7 && c < 7);
     const finderBit = (r, c) => {
@@ -211,8 +318,10 @@
         if (isFinder(r, c)) {
           on = finderBit(r, c);
         } else if (r === 6 || c === 6) {
+          // เส้นจังหวะสลับสี (Timing Pattern) แถวที่ 6 และคอลัมน์ที่ 6
           on = (r + c) % 2 === 0;
         } else {
+          // สุ่มจุดข้อมูลแบบ Deterministic ด้วย Linear Congruential Generator (LCG)
           hash = (Math.imul(hash ^ (r * 31 + c), 1103515245) + 12345) >>> 0;
           on = ((hash >> 16) & 1) === 1;
         }
@@ -222,6 +331,9 @@
     return `<svg viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PromptPay QR"><rect width="${size}" height="${size}" fill="#fff"/>${rects}</svg>`;
   }
 
+  /**
+   * เปิด Modal (`actionDialog`) แสดงภาพสลิปหลักฐานการโอนเงินขนาดใหญ่ พร้อมปุ่มเปิดดูในแท็บใหม่
+   */
   function openSlipModal(slipUrl, title, note = "") {
     document.getElementById("actionDialogContent").innerHTML = `
       <h2 class="auth-title">${escapeHtml(title)}</h2>
@@ -235,6 +347,12 @@
     openDialogSafe(actionDialog);
   }
 
+  /**
+   * เปิด Modal ชำระเงินแบบผสม (Hybrid Checkout) สำหรับผู้ซื้อที่ชนะประมูล
+   * รองรับ 2 ช่องทาง:
+   * 1) `PlatformEscrow`: สแกน QR ระบบกลาง + บังคับแนบไฟล์สลิป ให้ฝ่ายการเงินตรวจสอบ
+   * 2) `DirectToSeller`: โอนตรง/นัดจ่ายเงินสดกับผู้ขาย (ไม่บังคับแนบสลิป) ให้ผู้ขายกดยืนยันเอง
+   */
   function openCheckoutModal(order) {
     const qrSeed = `${buyerPaymentConfig.platformPromptPayId}|${order.orderCode}|${order.finalBuyerAmount}`;
     document.getElementById("actionDialogContent").innerHTML = `
@@ -300,6 +418,7 @@
     const previewWrap = document.getElementById("slipPreviewWrap");
     const previewImg = document.getElementById("slipPreviewImg");
 
+    // สลับ UI ระหว่างโหมดจ่ายผ่าน QR ระบบกลาง (Escrow) กับโหมดจ่ายตรงผู้ขาย
     form.querySelectorAll("input[name='paymentMethod']").forEach(radio => {
       radio.addEventListener("change", () => {
         const isEscrow = radio.value === "PlatformEscrow";
@@ -308,6 +427,7 @@
         });
         document.getElementById("checkoutEscrowBox").classList.toggle("hidden", !isEscrow);
         document.getElementById("checkoutDirectBox").classList.toggle("hidden", isEscrow);
+        // บังคับแนบสลิปเฉพาะโหมด PlatformEscrow เท่านั้น
         slipInput.required = isEscrow;
         document.getElementById("slipReqStar").classList.toggle("hidden", !isEscrow);
         document.getElementById("slipFieldHint").textContent = isEscrow
@@ -319,6 +439,7 @@
       });
     });
 
+    // แสดงภาพตัวอย่าง (Preview) สลิปทันทีที่ผู้ใช้เลือกไฟล์จากเครื่อง
     slipInput.addEventListener("change", () => {
       const file = slipInput.files?.[0];
       if (file) {
@@ -329,10 +450,15 @@
       }
     });
 
+    // ส่งข้อมูลการชำระเงินและไฟล์สลิปไปยังฝั่งหลังบ้านเมื่อกดปุ่มยืนยัน
     form.addEventListener("submit", async e => {
       e.preventDefault();
       const fd = new FormData(form);
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/buyer/orders/{order.id}/pay -> AuctionsController.PayOrder
+        // ข้อมูลที่ส่ง: multipart/form-data (`FormData`) ประกอบด้วย paymentMethod, slipFile (ไฟล์รูป), note
+        // ผลลัพธ์จากหลังบ้าน: JSON `{ message }` บันทึกไฟล์สลิปและเปลี่ยนสถานะเป็น PendingVerification -> ปิด Modal, แสดง Toast และรีโหลดหน้าแดชบอร์ดผู้ซื้อ
         const res = await api(`/api/buyer/orders/${order.id}/pay`, {
           method: "POST",
           body: fd
@@ -348,6 +474,9 @@
     openDialogSafe(actionDialog);
   }
 
+  /**
+   * แปลงสถานะสินค้าประมูล (`Approved`, `Pending`, `Rejected`, `Closed`) เป็นป้ายสถานะภาษาไทย
+   */
   function auctionStatusPill(status) {
     switch (status) {
       case "Approved": return statusPill("green", "เปิดประมูล");
@@ -358,6 +487,10 @@
     }
   }
 
+  /**
+   * กำหนดค่าเริ่มต้นของช่องวันเวลาเริ่มประมูล (+5 นาที) และสิ้นสุดประมูล (+24 ชั่วโมง)
+   * ในฟอร์มลงขายสินค้า `#listingForm` โดยปรับชดเชย Timezone ให้เข้ากับ `<input type="datetime-local">`
+   */
   function initListingDates() {
     const now = new Date();
     const toLocalInput = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -367,7 +500,14 @@
     if (endInput) endInput.value = toLocalInput(new Date(now.getTime() + 24 * 3600000));
   }
 
-  // ==================== NAVIGATION & AUTH UI ====================
+  // ==================== 6. การนำทาง, เมนูด้านข้าง และ UI ยืนยันตัวตน (NAVIGATION & AUTH UI) ====================
+  /**
+   * สร้างเมนู Sidebar ด้านซ้ายและแถบข้อมูลผู้ใช้ด้านบน (Topbar) แบบไดนามิกตาม Role ปัจจุบัน:
+   * - Guest / Buyer: ดูตลาดประมูล, รายการที่สนใจ, ชำระเงิน, แชท, สมัครเป็นผู้ขาย
+   * - Seller: เมนูผู้ขาย (ลงขาย, นัดรับ & ยอดขาย, แชท) + เมนูประมูลซื้อของสะสม
+   * - Admin: อนุมัติผู้ขาย/สินค้า, จัดการผู้ใช้, หมวดหมู่, ข้อพิพาท, ประวัติผู้ชนะ, Audit Log
+   * - Finance: ตรวจสลิป/ปล่อยเงิน/คืนเงิน, ตั้งกติกาส่วนลด/ค่าธรรมเนียม, รายงานยอดขาย, Audit Log
+   */
   function buildSidebar() {
     const container = document.getElementById("sidebarNavContainer");
     const role = currentUser?.role;
@@ -427,6 +567,7 @@
       });
     }
 
+    // เรนเดอร์หมวดหมู่เมนูและปุ่มเปลี่ยน View พร้อม Badge นับข้อความแชทที่ยังไม่อ่าน
     container.innerHTML = sections.map(sec => `
       <div class="sidebar-label">${escapeHtml(sec.title)}</div>
       <nav class="side-nav">
@@ -439,6 +580,7 @@
       </nav>
     `).join("");
 
+    // อัปเดตส่วนโปรไฟล์มุมล่างซ้ายของ Sidebar, ปุ่มบน Topbar และปุ่ม Hero ตามสถานะการล็อกอิน
     const sidebarAuth = document.getElementById("sidebarAuthArea");
     const topbarUser = document.getElementById("topbarUserArea");
     const heroAuthBtn = document.getElementById("heroAuthBtn");
@@ -473,6 +615,10 @@
     }
   }
 
+  /**
+   * สลับหน้าจอ SPA ไปยัง View เป้าหมาย (ซ่อน Panel อื่น แสดง `#view-${view}`),
+   * อัปเดต Breadcrumb, แสดง/ซ่อนช่องค้นหาสินค้า และเรียกฟังก์ชันโหลดข้อมูล API ของหน้านั้นๆ
+   */
   async function switchView(view) {
     if (!pageTitles[view]) return;
     activeView = view;
@@ -481,9 +627,11 @@
     document.querySelectorAll(".view-panel").forEach(p => p.classList.toggle("active", p.id === `view-${view}`));
     document.querySelectorAll("[data-view-link]").forEach(btn => btn.classList.toggle("active", btn.dataset.viewLink === view));
     document.getElementById("pageCrumb").textContent = pageTitles[view];
+    // แสดงช่องค้นหาเฉพาะหน้าตลาดประมูลวันนี้ ("today")
     document.getElementById("globalSearchBox").classList.toggle("hidden", view !== "today");
     window.scrollTo({ top: 0, behavior: "smooth" });
 
+    // โหลดข้อมูลล่าสุดจากฝั่งหลังบ้านให้สอดคล้องกับหน้าที่เปิดอยู่
     try {
       if (view === "today") await loadAuctions();
       else if (view === "mybids" || view === "payments") await loadBuyerDashboard();
@@ -498,7 +646,10 @@
     }
   }
 
-  // ==================== AUTH MODAL ====================
+  // ==================== 7. MODAL ยืนยันตัวตน, AUDIT LOG, SESSION & POLLING ====================
+  /**
+   * เปิด Modal เข้าสู่ระบบ / สมัครสมาชิก / ลืมรหัสผ่าน พร้อมโหลดรายชื่อบัญชีทดลอง 4 บทบาทมาแสดง (แคชไว้ครั้งแรก)
+   */
   async function openAuthModal(tab = "login") {
     document.querySelectorAll(".auth-tab").forEach(t => t.classList.toggle("active", t.dataset.authTab === tab));
     document.getElementById("authTabLogin").classList.toggle("hidden", tab !== "login");
@@ -507,6 +658,10 @@
 
     const demoSection = document.getElementById("demoAccountsSection");
     if (demoAccountsCache.length === 0) {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: GET /api/auth/demo-accounts -> AuthController.DemoAccounts
+      // ข้อมูลที่ส่ง: ไม่มี (GET เปล่า)
+      // ผลลัพธ์จากหลังบ้าน: JSON Array ของบัญชีทดลอง `[{ email, role, label, name, note }]` (ว่างใน Production) -> นำมาสร้างการ์ดคลิกสลับบัญชีใน `#demoAccountsGrid`
       try { demoAccountsCache = await api("/api/auth/demo-accounts"); } catch { demoAccountsCache = []; }
     }
     if (demoSection) {
@@ -523,7 +678,14 @@
     openDialogSafe(authDialog);
   }
 
+  /**
+   * โหลดตารางบันทึกประวัติการทำงาน (Audit Log) สำหรับ Admin และ Finance พร้อมตัวกรองตาม Role
+   */
   async function loadAuditLogs(roleFilter = "all") {
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/audit-logs?role={roleFilter} -> AuditLogsController.GetLogs
+    // ข้อมูลที่ส่ง: Query String `role` (เช่น "all", "Admin", "Finance", "Seller", "Buyer")
+    // ผลลัพธ์จากหลังบ้าน: JSON Array ของรายการ AuditLog -> เรนเดอร์ลงตาราง `#auditLogRows`
     const logs = await api(`/api/audit-logs?role=${encodeURIComponent(roleFilter)}`);
     document.getElementById("auditLogRows").innerHTML = logs.length
       ? logs.map(l => `
@@ -538,12 +700,21 @@
       : `<tr class="empty-row"><td colspan="6">ยังไม่มีประวัติการทำงาน</td></tr>`;
   }
 
+  /**
+   * ตรวจสอบ Session ปัจจุบันจาก Auth Cookie กับฝั่งหลังบ้าน, อัปเดต `currentUser` และ `globalSettings`,
+   * สร้าง Sidebar ใหม่, พาไปยังหน้าแรกตามบทบาท (ถ้า `goDefaultView = true`) และเริ่ม Timer แจ้งเตือนทุก 5 วินาที
+   */
   async function refreshSession(goDefaultView = false) {
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/auth/me -> AuthController.Me
+    // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (`credentials: "same-origin"`)
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ authenticated, user, settings }` -> อัปเดตสถานะผู้ใช้ กติการะบบ และ UI ทั้งหน้า
     const me = await api("/api/auth/me");
     const prevUserId = currentUser?.id || null;
     currentUser = me.authenticated ? me.user : null;
     if (me.settings) globalSettings = me.settings;
 
+    // หากมีการสลับบัญชีหรือออกจากระบบ ให้รีเซ็ตสถานะแชทและตัวนับแจ้งเตือนของคนเดิม
     if ((currentUser?.id || null) !== prevUserId) {
       lastNotifiedMessageId = null;
       unreadMessagesCount = 0;
@@ -556,12 +727,14 @@
 
     buildSidebar();
 
+    // ยกเลิกตัว Polling เดิมก่อนเริ่มรอบใหม่เพื่อป้องกัน Timer ซ้อนกัน
     if (notifPollTimer) {
       window.clearInterval(notifPollTimer);
       notifPollTimer = null;
     }
 
     if (goDefaultView) {
+      // กำหนดหน้าแรก (Landing View) ของแต่ละบทบาทหลังล็อกอิน
       const defaultByRole = {
         Buyer: "today",
         Seller: "sell",
@@ -573,26 +746,36 @@
       await switchView(activeView);
     }
 
+    // หากล็อกอินอยู่ ให้เริ่มดึงสรุปการแจ้งเตือนทันทีและตั้ง Polling ซ้ำทุก 5 วินาที
     if (currentUser) {
       await pollNotifications(true);
       notifPollTimer = window.setInterval(() => pollNotifications(false), 5000);
     }
   }
 
+  /**
+   * ระบบ Polling ดึงสรุปการแจ้งเตือนและข้อความแชทเข้าใหม่จากฝั่งหลังบ้านทุก 5 วินาที
+   * @param {boolean} isInitial - true ในการเรียกครั้งแรกหรือหลังอ่านแจ้งเตือน (จะไม่เด้ง Toast ซ้ำ)
+   */
   async function pollNotifications(isInitial = false) {
     if (!currentUser) return;
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: GET /api/notifications/summary -> NotificationsController.GetSummary
+      // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ
+      // ผลลัพธ์จากหลังบ้าน: JSON `{ unreadMessagesCount, totalCount, roleAlerts, notifications, latestMessageId, latestIncomingMessage }`
+      // -> อัปเดต Badge กระดิ่ง/เมนูแชท, เรนเดอร์ Dropdown แจ้งเตือน และเด้ง Toast/รีเฟรชห้องแชทเมื่อมีข้อความเข้าใหม่
       const data = await api("/api/notifications/summary");
       unreadMessagesCount = data.unreadMessagesCount || 0;
 
-      // Update sidebar messages badge
+      // อัปเดตตัวเลข Badge จำนวนข้อความที่ยังไม่อ่านบนเมนู Sidebar
       const navBadge = document.getElementById("navUnreadMessagesBadge");
       if (navBadge) {
         navBadge.textContent = unreadMessagesCount > 99 ? "99+" : String(unreadMessagesCount);
         navBadge.classList.toggle("hidden", unreadMessagesCount <= 0);
       }
 
-      // Update topbar bell badge
+      // อัปเดตตัวเลข Badge บนปุ่มกระดิ่งแจ้งเตือนที่ Topbar
       const bellBadge = document.getElementById("notifBadge");
       const total = data.totalCount || 0;
       if (bellBadge) {
@@ -600,7 +783,7 @@
         bellBadge.classList.toggle("hidden", total <= 0);
       }
 
-      // Render dropdown items
+      // เรนเดอร์รายการแจ้งเตือนใน Dropdown (รวมงานค้างตามบทบาท `roleAlerts` + แจ้งเตือนรายบุคคล `notifications`)
       const listEl = document.getElementById("notifDropdownList");
       if (listEl) {
         const alertHtml = (data.roleAlerts || []).map(a => `
@@ -624,7 +807,7 @@
         listEl.innerHTML = (alertHtml + notifHtml) || `<div class="notif-empty">ไม่มีการแจ้งเตือนใหม่</div>`;
       }
 
-      // Live incoming chat message notification + live refresh
+      // ตรวจจับข้อความแชทเข้าใหม่แบบ Live (เทียบ latestMessageId กับรอบก่อนหน้า)
       const latestId = data.latestMessageId || 0;
       const incoming = data.latestIncomingMessage;
       if (isInitial || lastNotifiedMessageId === null) {
@@ -632,31 +815,46 @@
       } else if (latestId > lastNotifiedMessageId && incoming) {
         lastNotifiedMessageId = latestId;
         if (activeView === "messages" && activeConversationId === incoming.conversationId) {
+          // หากผู้ใช้กำลังเปิดห้องแชทนี้อยู่แล้ว ให้ดึงข้อความล่าสุดมาต่อท้ายโดยรักษาตำแหน่ง Scroll
           await openConversation(incoming.conversationId, { preserveScroll: true });
         } else {
+          // หากอยู่หน้าอื่น ให้เด้ง Toast แจ้งเตือนที่คลิกเพื่อกระโดดเข้าห้องแชทได้ทันที
           const snippet = incoming.body.length > 60 ? `${incoming.body.slice(0, 60)}…` : incoming.body;
           showToast(`💬 ข้อความใหม่จาก ${incoming.senderName}: ${snippet}`, false, async () => {
             activeConversationId = incoming.conversationId;
             await switchView("messages");
           });
           if (activeView === "messages") {
+            // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+            // Endpoint: GET /api/chat/conversations -> ChatController.GetConversations
+            // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ
+            // ผลลัพธ์จากหลังบ้าน: JSON Array รายการห้องแชทล่าสุด -> อัปเดต `conversationsCache` และเรนเดอร์แถบรายชื่อแชทด้านซ้ายใหม่
             conversationsCache = await api("/api/chat/conversations");
             renderConversationList();
           }
         }
       }
     } catch {
-      // Ignore transient poll errors
+      // ข้ามข้อผิดพลาดชั่วคราวของเครือข่ายระหว่าง Polling เพื่อไม่รบกวนผู้ใช้
     }
   }
 
-  // ==================== PUBLIC / BUYER: TODAY ====================
+  // ==================== 8. หน้าร้านประมูลสาธารณะและรายละเอียดสินค้า (PUBLIC / BUYER: TODAY) ====================
+  /**
+   * โหลดรายการสินค้าประมูลที่เปิดอยู่ตามเงื่อนไขตัวกรอง (หมวดหมู่, คำค้นหา, การเรียงลำดับ)
+   * แล้วเรนเดอร์แถบปุ่มหมวดหมู่ (Category Chips), ข้อความโปรโมชัน และตารางการ์ดสินค้าในหน้า "ประมูลวันนี้"
+   */
   async function loadAuctions() {
     const params = new URLSearchParams();
     if (activeCategoryId > 0) params.set("categoryId", String(activeCategoryId));
     if (searchTerm) params.set("search", searchTerm);
     params.set("sort", sortMode);
 
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/auctions?categoryId=...&search=...&sort=... -> AuctionsController.GetAuctions
+    // ข้อมูลที่ส่ง: Query String `categoryId` (ถ้า > 0), `search` (คำค้นหา), `sort` (โหมดเรียงลำดับ)
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ settings, categories, products, totalLiveCount }`
+    // -> อัปเดต `globalSettings`, `cachedCategories`, `liveProducts` และเรนเดอร์แถบหมวดหมู่ + การ์ดสินค้า `#productGrid`
     const data = await api(`/api/auctions?${params.toString()}`);
     globalSettings = data.settings;
     cachedCategories = data.categories;
@@ -667,7 +865,7 @@
     document.getElementById("discountHintText").textContent =
       `กติกาปัจจุบัน: ซื้อสินค้าหมวดเดียวกันรับส่วนลด ${globalSettings.sameCategoryDiscountPercent}% · เสนอราคาเพิ่มขั้นต่ำ ${money(globalSettings.globalMinBidIncrement)}`;
 
-    // Categories
+    // เรนเดอร์ชิปเลือกหมวดหมู่สินค้า (พร้อมไฮไลต์หมวดที่ผู้ซื้อมีสิทธิ์รับส่วนลดหมวดเดียวกัน)
     const catRow = document.getElementById("categoryRow");
     const allChip = `
       <button class="category-chip${activeCategoryId === 0 ? " active" : ""}" type="button" data-category="0">
@@ -685,7 +883,7 @@
       </button>`).join("");
     catRow.innerHTML = allChip + catChips;
 
-    // Product Grid
+    // เรนเดอร์การ์ดสินค้าประมูลลงใน #productGrid (รองรับทั้งโหมด Grid และ List View)
     const grid = document.getElementById("productGrid");
     grid.classList.toggle("list-view", listViewMode);
     grid.innerHTML = liveProducts.map(p => `
@@ -718,8 +916,16 @@
     document.getElementById("emptyState").classList.toggle("hidden", liveProducts.length > 0);
   }
 
+  /**
+   * เปิด Modal (`auctionDialog`) แสดงรายละเอียดสินค้า ประวัติการเสนอราคา ปุ่มแชทกับผู้ขาย
+   * และฟอร์มเสนอราคา (`#bidForm`) โดยตรวจสอบเงื่อนไขสิทธิ์การบิด (เวลาปิด, บทบาท, เจ้าของสินค้า)
+   */
   async function openProduct(productId) {
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: GET /api/auctions/{productId} -> AuctionsController.GetAuctionDetail
+      // ข้อมูลที่ส่ง: Route Parameter `productId` (+ Auth Cookie เพื่อเช็กสิทธิ์ส่วนลดและสถานะสินค้า)
+      // ผลลัพธ์จากหลังบ้าน: JSON รายละเอียดสินค้า, ราคาสูงสุด, ขั้นต่ำรอบถัดไป (`minNextBid`) และ `history` ประวัติบิด -> เรนเดอร์ใน `#dialogContent`
       const p = await api(`/api/auctions/${productId}`);
       selectedProductId = p.id;
 
@@ -731,6 +937,7 @@
           </div>`).join("")
         : `<p class="dialog-minimum">ยังไม่มีผู้เสนอราคา เป็นคนแรกที่เริ่มประมูลได้เลย</p>`;
 
+      // กำหนดส่วนควบคุมการเสนอราคาให้เหมาะกับสถานะสินค้าและบทบาทของผู้ใช้ปัจจุบัน
       let bidControlHtml = "";
       const isExpiredNow = p.isClosed || parseUtcDate(p.endAt).getTime() <= Date.now();
       const canBidRole = currentUser && (currentUser.role === "Buyer" || currentUser.role === "Seller");
@@ -780,11 +987,22 @@
     }
   }
 
-  // ==================== BUYER DASHBOARD ====================
+  // ==================== 9. แดชบอร์ดฝั่งผู้ประมูล / ผู้ซื้อ (BUYER DASHBOARD) ====================
+  /**
+   * โหลดข้อมูลหน้าผู้ซื้อทั้งหมดในครั้งเดียว:
+   * 1) สินค้าที่กดถูกใจ/สนใจ (`savedGrid`)
+   * 2) ประวัติการเสนอราคา (`bidHistoryRows`)
+   * 3) รายการค้างชำระ (`paymentList`) และประวัติออเดอร์ที่ชนะประมูลทั้งหมดพร้อมปุ่มชำระเงิน/ยืนยันรับของ (`buyerOrdersRows`)
+   */
   async function loadBuyerDashboard() {
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/buyer/dashboard -> AuctionsController.GetBuyerDashboard
+    // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (ต้องล็อกอินเป็น Buyer หรือ Seller)
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ saved, bidHistory, orders, paymentConfig }`
+    // -> อัปเดต `buyerOrdersCache`, `buyerPaymentConfig` และเรนเดอร์ 4 ส่วนของหน้า `mybids` และ `payments`
     const data = await api("/api/buyer/dashboard");
 
-    // Saved grid
+    // 1. เรนเดอร์รายการสินค้าที่ผู้ซื้อบันทึกไว้ (Saved / Watchlist)
     const savedGrid = document.getElementById("savedGrid");
     savedGrid.innerHTML = data.saved.map(p => `
       <article class="product-card">
@@ -805,7 +1023,7 @@
     `).join("");
     document.getElementById("savedEmpty").classList.toggle("hidden", data.saved.length > 0);
 
-    // Bid history
+    // 2. เรนเดอร์ตารางประวัติการเสนอราคาทั้งหมดของผู้ใช้
     document.getElementById("bidHistoryRows").innerHTML = data.bidHistory.length
       ? data.bidHistory.map(b => `
         <tr>
@@ -818,11 +1036,11 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="6">คุณยังไม่มีประวัติการเสนอราคา</td></tr>`;
 
-    // Cache buyer orders & payment config
+    // แคชรายการออเดอร์และการตั้งค่าบัญชีกลางไว้ใช้ตอนเปิด Modal ชำระเงิน (`openCheckoutModal`)
     buyerOrdersCache = data.orders || [];
     if (data.paymentConfig) buyerPaymentConfig = data.paymentConfig;
 
-    // Unpaid payments
+    // 3. เรนเดอร์การ์ดรายการค้างชำระ (เฉพาะออเดอร์ที่ paymentStatus === "Unpaid")
     const unpaid = buyerOrdersCache.filter(o => o.paymentStatus === "Unpaid");
     document.getElementById("paymentList").innerHTML = unpaid.length
       ? unpaid.map(o => `
@@ -843,7 +1061,7 @@
         </article>`).join("")
       : `<div class="empty-state">ไม่มีรายการค้างชำระในขณะนี้</div>`;
 
-    // All won orders & meetups
+    // 4. เรนเดอร์ตารางออเดอร์ที่ชนะประมูลทั้งหมด พร้อมสถานะชำระเงิน นัดรับ และปุ่มดำเนินการ
     document.getElementById("buyerOrdersRows").innerHTML = buyerOrdersCache.length
       ? buyerOrdersCache.map(o => `
         <tr>
@@ -885,6 +1103,11 @@
       : `<tr class="empty-row"><td colspan="6">ยังไม่มีประวัติสินค้าที่ประมูลได้</td></tr>`;
   }
 
+  /**
+   * แสดงสถานะหน้า "สมัครเป็นผู้ขาย" สำหรับผู้ซื้อ (Buyer)
+   * - หากสถานะ `Pending`: แสดงแบนเนอร์รอแอดมินตรวจสอบและซ่อนฟอร์มสมัคร
+   * - หากสถานะ `Rejected`: แสดงเหตุผลที่ถูกปฏิเสธและเปิดฟอร์มให้ส่งสมัครใหม่ได้
+   */
   function renderBuyerApplySeller() {
     const statusBox = document.getElementById("buyerApplySellerStatus");
     const form = document.getElementById("buyerApplySellerForm");
@@ -902,19 +1125,35 @@
     }
   }
 
-  // ==================== SELLER DASHBOARD ====================
+  // ==================== 10. แดชบอร์ดฝั่งผู้ขาย (SELLER DASHBOARD) ====================
+  /**
+   * โหลดข้อมูลหน้าผู้ขายทั้งหมด:
+   * - สถานะอนุมัติร้านค้า (Approved / Pending / Rejected) เพื่อเปิด/ปิดฟอร์มลงขายหรือฟอร์มสมัครใหม่
+   * - ตัวเลือกหมวดหมู่และขั้นต่ำการบิดในฟอร์มลงขายสินค้า
+   * - ตารางสินค้าที่ผู้ขายลงขาย (`sellerRows`)
+   * - สถิติยอดขาย/ค่าธรรมเนียม/ยอดรอโอน (`sellerFinanceStats`) และตารางออเดอร์นัดรับ (`sellerOrdersRows`)
+   */
   async function loadSellerDashboard() {
     if (cachedCategories.length === 0) {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: GET /api/auctions -> AuctionsController.GetAuctions
+      // ข้อมูลที่ส่ง: ไม่มี (ดึงเฉพาะรายการหมวดหมู่กรณีผู้ขายเข้ามาหน้าแดชบอร์ดโดยตรงและยังไม่มีแคชหมวดหมู่)
+      // ผลลัพธ์จากหลังบ้าน: JSON `{ categories, ... }` -> เก็บลง `cachedCategories` เพื่อเติมตัวเลือกใน `<select>`
       const pub = await api("/api/auctions");
       cachedCategories = pub.categories;
     }
 
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/seller/dashboard -> SellerController.GetDashboard
+    // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (ต้องล็อกอินเป็น Seller)
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ seller, listings, orders, summary, globalMinBidIncrement, platformFeePercent }`
+    // -> อัปเดต `sellerListingsCache`, `currentUser` และเรนเดอร์ UI หน้าลงขาย + หน้านัดรับ & ยอดขาย
     const data = await api("/api/seller/dashboard");
     sellerListingsCache = data.listings;
     const seller = data.seller;
     currentUser = seller;
 
-    // Populate category dropdown & min increment hint
+    // เติมรายการหมวดหมู่ในฟอร์มลงขายและตั้งค่าขั้นต่ำการบิดตามกติกาของฝ่ายการเงิน
     const catSelect = document.getElementById("listingCategorySelect");
     catSelect.innerHTML = `<option value="">เลือกหมวดหมู่</option>` +
       cachedCategories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
@@ -923,7 +1162,7 @@
     if (Number(minIncInput.value) < data.globalMinBidIncrement) minIncInput.value = data.globalMinBidIncrement;
     document.getElementById("sellerMinBidHint").textContent = `ขั้นต่ำตามกติกาฝ่ายการเงิน ≥ ${money(data.globalMinBidIncrement)} · ค่าธรรมเนียมระบบ ${data.platformFeePercent}%`;
 
-    // Approval status banner
+    // แสดงแบนเนอร์สถานะการอนุมัติผู้ขาย และควบคุมการมองเห็นของฟอร์มลงขาย / ฟอร์มส่งใบสมัครใหม่
     const banner = document.getElementById("sellerApprovalBanner");
     const formWrap = document.getElementById("sellerListingFormWrap");
     const reapplyBox = document.getElementById("sellerReapplyBox");
@@ -947,7 +1186,7 @@
       rf.sellerBio.value = seller.sellerBio || "";
     }
 
-    // Seller listings table
+    // เรนเดอร์ตารางรายการสินค้าที่ผู้ขายลงประมูลไว้
     document.getElementById("sellerRows").innerHTML = data.listings.length
       ? data.listings.map(item => `
         <tr>
@@ -978,7 +1217,7 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="5">ยังไม่มีสินค้าที่ลงขาย</td></tr>`;
 
-    // Seller Finance Stats & Sold Orders
+    // เรนเดอร์การ์ดสรุปตัวเลขการเงินและตารางออเดอร์ที่ขายได้ (นัดรับ/ส่งมอบ/ยืนยันรับเงินตรง)
     const s = data.summary;
     document.getElementById("sellerFinanceStats").innerHTML = `
       <div><small>ยอดขายที่ชำระแล้ว</small><strong>${money(s.totalGross)}</strong><span>ก่อนหักค่าธรรมเนียม</span></div>
@@ -1030,8 +1269,15 @@
       : `<tr class="empty-row"><td colspan="7">ยังไม่มีรายการขายที่ปิดประมูล</td></tr>`;
   }
 
-  // ==================== CHAT (BUYER & SELLER) ====================
+  // ==================== 11. ระบบกล่องข้อความและแชท (CHAT: BUYER & SELLER) ====================
+  /**
+   * โหลดรายชื่อห้องแชททั้งหมดของผู้ใช้ แล้วเปิดห้องเป้าหมาย (หรือห้องแรกสุด) โดยอัตโนมัติ
+   */
   async function loadConversations(selectConvId = null) {
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/chat/conversations -> ChatController.GetConversations
+    // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ
+    // ผลลัพธ์จากหลังบ้าน: JSON Array ของห้องสนทนาพร้อมข้อความล่าสุดและจำนวนที่ยังไม่อ่าน -> เก็บลง `conversationsCache` และเรนเดอร์
     conversationsCache = await api("/api/chat/conversations");
     renderConversationList();
 
@@ -1047,6 +1293,9 @@
     }
   }
 
+  /**
+   * กรองและเรนเดอร์รายชื่อห้องแชทในแถบด้านซ้าย (`#conversationItems`) ตามคำค้นหาใน `#convSearchInput`
+   */
   function renderConversationList() {
     const q = (document.getElementById("convSearchInput")?.value || "").trim().toLowerCase();
     const list = conversationsCache.filter(c =>
@@ -1068,13 +1317,22 @@
       : `<div class="empty-state" style="border:0;">ไม่พบบทสนทนา</div>`;
   }
 
+  /**
+   * เปิดอ่านข้อความในห้องแชทที่เลือก (`convId`), เคลียร์สถานะยังไม่อ่าน, แสดงแบนเนอร์ข้อพิพาท (ถ้ามี),
+   * เรนเดอร์ฟองข้อความ (Chat Bubbles) และเลื่อนหน้าต่างข้อความลงล่างสุด (หรือคงตำแหน่งเดิมถ้าเลื่อนอ่านด้านบนอยู่)
+   */
   async function openConversation(convId, { preserveScroll = false } = {}) {
     const isSameConv = activeConversationId === convId;
     const msgBox = document.getElementById("chatMessages");
     const prevScrollTop = msgBox ? msgBox.scrollTop : 0;
+    // ตรวจว่าผู้ใช้เลื่อนอยู่ใกล้ล่างสุดหรือไม่ (< 90px) เพื่อตัดสินใจว่าจะ auto-scroll ลงล่างไหมตอนมีข้อความใหม่
     const wasNearBottom = !msgBox || (msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight < 90);
 
     activeConversationId = convId;
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/chat/conversations/{convId}/messages -> ChatController.GetMessages
+    // ข้อมูลที่ส่ง: Route Parameter `convId` (+ Auth Cookie) โดยฝั่งหลังบ้านจะทำเครื่องหมายว่าอ่านข้อความในห้องนี้แล้วอัตโนมัติ
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ id, peerName, itemName, auctionItemId, messages, disputes }` -> เรนเดอร์หัวห้องและข้อความใน `#chatMessages`
     const conv = await api(`/api/chat/conversations/${convId}/messages`);
     const summary = conversationsCache.find(c => c.id === convId);
     if (summary) summary.unreadCount = 0;
@@ -1117,8 +1375,20 @@
     document.getElementById("chatSendBtn").disabled = false;
   }
 
-  // ==================== ADMIN DASHBOARD ====================
+  // ==================== 12. แดชบอร์ดฝั่งผู้ดูแลระบบ (ADMIN DASHBOARD) ====================
+  /**
+   * โหลดข้อมูลและเรนเดอร์ทุกแท็บของฝั่งผู้ดูแลระบบ (Admin):
+   * - การ์ดสถิติรวม (`adminStatsCards`)
+   * - ตารางใบสมัครผู้ขายรออนุมัติ (`adminSellerRows`) และสินค้ารออนุมัติ (`adminAuctionRows`)
+   * - ตารางจัดการบัญชีผู้ใช้ (`adminUsersRows`) และหมวดหมู่สินค้า (`adminCategoriesRows`)
+   * - ตารางเคสข้อพิพาท (`adminDisputesRows`) และประวัติผู้ชนะแบบอ่านอย่างเดียว (`adminWinnersRows`)
+   */
   async function loadAdminDashboard() {
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/admin/dashboard -> AdminController.GetDashboard
+    // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (ต้องมีสิทธิ์ Role = Admin)
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ stats, pendingSellers, pendingAuctions, users, categories, disputes, winnersReadOnly }`
+    // -> เรนเดอร์ลงการ์ดสถิติและตารางทั้ง 6 ส่วนในกลุ่มหน้า `admin-*`
     const data = await api("/api/admin/dashboard");
     const st = data.stats;
 
@@ -1129,7 +1399,7 @@
       <div><small>ข้อพิพาทที่เปิดอยู่</small><strong>${st.openDisputesCount}</strong><span>เคสรอตรวจสอบ</span></div>
     `;
 
-    // Pending Sellers
+    // 1. ตารางใบสมัครผู้ขายรออนุมัติ
     document.getElementById("adminSellerRows").innerHTML = data.pendingSellers.length
       ? data.pendingSellers.map(u => `
         <tr>
@@ -1145,7 +1415,7 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="4">ไม่มีใบสมัครผู้ขายรออนุมัติ</td></tr>`;
 
-    // Pending Auctions
+    // 2. ตารางสินค้าประมูลรออนุมัติ
     document.getElementById("adminAuctionRows").innerHTML = data.pendingAuctions.length
       ? data.pendingAuctions.map(a => `
         <tr>
@@ -1168,7 +1438,7 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="5">ไม่มีสินค้ารอตรวจสอบ</td></tr>`;
 
-    // Users
+    // 3. ตารางจัดการบัญชีผู้ใช้ทั้งหมด (ระงับ / ปลดระงับ)
     document.getElementById("adminUsersRows").innerHTML = data.users.map(u => `
       <tr>
         <td><strong>${escapeHtml(u.displayName)}</strong><small class="table-subline">${escapeHtml(u.email)}</small></td>
@@ -1188,7 +1458,7 @@
         </td>
       </tr>`).join("");
 
-    // Categories
+    // 4. ตารางจัดการหมวดหมู่สินค้า (เพิ่ม / แก้ไข / ลบหรือปิดใช้งาน)
     document.getElementById("adminCategoriesRows").innerHTML = data.categories.map(c => `
       <tr>
         <td><strong>${escapeHtml(c.symbol)} ${escapeHtml(c.name)}</strong></td>
@@ -1204,7 +1474,7 @@
         </td>
       </tr>`).join("");
 
-    // Disputes
+    // 5. ตารางเรื่องร้องเรียนข้อพิพาท
     document.getElementById("adminDisputesRows").innerHTML = data.disputes.length
       ? data.disputes.map(d => `
         <tr>
@@ -1216,7 +1486,7 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="5">ยังไม่มีเรื่องร้องเรียนข้อพิพาท</td></tr>`;
 
-    // Read-only Winners Archive
+    // 6. ตารางประวัติผู้ชนะประมูลแบบอ่านอย่างเดียว (Admin ไม่มีสิทธิ์ปล่อยเงิน/คืนเงิน แยกอำนาจกับฝ่ายการเงิน)
     document.getElementById("adminWinnersRows").innerHTML = data.winnersReadOnly.length
       ? data.winnersReadOnly.map(w => `
         <tr>
@@ -1236,8 +1506,18 @@
       : `<tr class="empty-row"><td colspan="7">ยังไม่มีประวัติผู้ชนะประมูล</td></tr>`;
   }
 
-  // ==================== FINANCE DASHBOARD ====================
+  // ==================== 13. แดชบอร์ดฝั่งฝ่ายการเงิน (FINANCE DASHBOARD) ====================
+  /**
+   * โหลดข้อมูลและเรนเดอร์ทุกหน้าของฝ่ายการเงิน (Finance):
+   * - การ์ดสรุปยอดเงิน (`financeSummaryCards`) และตารางตรวจสลิป/ปล่อยเงิน/คืนเงิน (`financeOrdersRows`)
+   * - ฟอร์มตั้งกติกาส่วนลด ค่าธรรมเนียม ขั้นต่ำการบิด และบัญชีกลาง (`financeRulesForm`)
+   * - การ์ดและตารางรายงานยอดขายสุทธิ (`financeReportCards`, `financeReportRows`)
+   */
   async function loadFinanceDashboard() {
+    // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+    // Endpoint: GET /api/finance/dashboard -> FinanceController.GetDashboard
+    // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (ต้องมีสิทธิ์ Role = Finance)
+    // ผลลัพธ์จากหลังบ้าน: JSON `{ summary, settings, orders }` -> เรนเดอร์ลงหน้า `finance-payments`, `finance-rules`, `finance-report`
     const data = await api("/api/finance/dashboard");
     const s = data.summary;
     const set = data.settings;
@@ -1290,7 +1570,7 @@
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="7">ยังไม่มีรายการชำระเงิน</td></tr>`;
 
-    // Rules Form
+    // เติมค่ากติการะบบปัจจุบันลงในฟอร์มตั้งค่าของฝ่ายการเงิน
     const rf = document.getElementById("financeRulesForm");
     rf.sameCategoryDiscountPercent.value = set.sameCategoryDiscountPercent;
     rf.platformFeePercent.value = set.platformFeePercent;
@@ -1299,7 +1579,7 @@
     if (rf.platformAccountName) rf.platformAccountName.value = set.platformAccountName || "";
     document.getElementById("financeRulesUpdated").textContent = `อัปเดตล่าสุด: ${formatDateTime(set.updatedAt)}`;
 
-    // Report Cards & Table
+    // การ์ดสรุปและตารางรายงานยอดขาย/ผู้ชนะ (สามารถกดพิมพ์หรือ Export CSV ได้)
     document.getElementById("financeReportCards").innerHTML = `
       <div><small>มูลค่าปิดประมูลรวม (GMV)</small><strong>${money(s.grossSales)}</strong><span>รายการที่ชำระแล้ว</span></div>
       <div><small>ส่วนลดหมวดเดียวกันรวม</small><strong>${money(s.totalDiscounts)}</strong><span>ส่งเสริมการซื้อซ้ำ</span></div>
@@ -1324,7 +1604,11 @@
       : `<tr class="empty-row"><td colspan="10">ยังไม่มีข้อมูลรายงาน</td></tr>`;
   }
 
-  // ==================== ACTION MODALS ====================
+  // ==================== 14. MODAL ดำเนินการและตรวจสอบข้อพิพาท (ACTION MODALS) ====================
+  /**
+   * เปิด Modal อเนกประสงค์สำหรับกรอกเหตุผล/หมายเหตุ (ใช้ซ้ำร่วมกันหลายคำสั่ง เช่น ปฏิเสธผู้ขาย, ปฏิเสธสินค้า,
+   * ระงับบัญชี, ปฏิเสธสลิป, ปล่อยเงิน และคืนเงิน) โดยรับ callback `onSubmit(reason)` เพื่อยิง API ของแต่ละคำสั่ง
+   */
   function showReasonModal({ title, subtitle, label, placeholder, submitText, danger = true, onSubmit }) {
     document.getElementById("actionDialogContent").innerHTML = `
       <h2 class="auth-title">${escapeHtml(title)}</h2>
@@ -1352,8 +1636,16 @@
     openDialogSafe(actionDialog);
   }
 
+  /**
+   * เปิด Modal ให้แอดมินตรวจสอบหลักฐานแชทเฉพาะเคสข้อพิพาทที่ถูกร้องเรียน (`disputeId`)
+   * พร้อมฟอร์มอัปเดตสถานะข้อพิพาท (`Open` / `Investigating` / `Resolved`) และบันทึกข้อสรุปของแอดมิน
+   */
   async function openDisputeInspector(disputeId) {
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: GET /api/admin/disputes/{disputeId}/messages -> AdminController.GetDisputeChat
+      // ข้อมูลที่ส่ง: Route Parameter `disputeId` (+ Auth Cookie สิทธิ์ Admin)
+      // ผลลัพธ์จากหลังบ้าน: JSON รายละเอียดข้อพิพาทและรายการข้อความแชทเฉพาะห้องที่เกิดข้อพิพาท -> แสดงใน `#actionDialogContent`
       const d = await api(`/api/admin/disputes/${disputeId}/messages`);
       document.getElementById("actionDialogContent").innerHTML = `
         <h2 class="auth-title">ตรวจสอบข้อพิพาท #${d.id}</h2>
@@ -1394,6 +1686,10 @@
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         try {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/admin/disputes/{disputeId}/update -> AdminController.UpdateDispute
+          // ข้อมูลที่ส่ง: JSON `{ status, adminNote }`
+          // ผลลัพธ์จากหลังบ้าน: JSON `{ message }` บันทึกผลข้อพิพาท -> แสดง Toast, ปิด Modal และรีโหลดแดชบอร์ด Admin
           const res = await api(`/api/admin/disputes/${disputeId}/update`, {
             method: "POST",
             body: JSON.stringify({ status: fd.get("status"), adminNote: fd.get("adminNote") })
@@ -1409,7 +1705,8 @@
     }
   }
 
-  // ==================== GLOBAL EVENT LISTENERS ====================
+  // ==================== 15. ตัวดักจับเหตุการณ์และฟอร์มหลักทั้งหมด (GLOBAL EVENT LISTENERS & FORMS) ====================
+  // เปิด/ปิดแถบเมนูด้านข้างบนมือถือ, ปุ่มเข้าสู่ระบบบน Hero และปุ่มพิมพ์รายงานการเงิน
   document.getElementById("mobileMenuBtn").addEventListener("click", () => {
     document.getElementById("sidebar").classList.toggle("mobile-open");
     document.getElementById("sidebarBackdrop").classList.toggle("hidden");
@@ -1418,11 +1715,13 @@
   document.getElementById("heroAuthBtn")?.addEventListener("click", () => openAuthModal("login"));
   document.getElementById("printReportBtn")?.addEventListener("click", () => window.print());
 
+  // ปุ่มสลับมุมมองการ์ดสินค้าระหว่าง Grid View และ List View
   document.getElementById("viewToggleBtn")?.addEventListener("click", () => {
     listViewMode = !listViewMode;
     document.getElementById("productGrid").classList.toggle("list-view", listViewMode);
   });
 
+  // ปุ่มเรียงลำดับสินค้า (ใกล้ปิดประมูล, มาใหม่, ราคาต่ำ-สูง ฯลฯ) แล้วโหลดรายการจากหลังบ้านใหม่
   document.querySelectorAll(".sort-button[data-sort]").forEach(btn => {
     btn.addEventListener("click", () => {
       sortMode = btn.dataset.sort;
@@ -1431,6 +1730,7 @@
     });
   });
 
+  // ช่องค้นหาสินค้าแบบ Debounce 220 มิลลิวินาที เพื่อไม่ให้ยิง API ถี่เกินไประหว่างผู้ใช้กำลังพิมพ์
   let searchTimer = null;
   document.getElementById("searchInput").addEventListener("input", e => {
     searchTerm = e.target.value.trim();
@@ -1438,9 +1738,10 @@
     searchTimer = setTimeout(() => loadAuctions().catch(err => showToast(err.message, true)), 220);
   });
 
+  // ช่องค้นหาห้องแชท (กรองฝั่ง Client จาก conversationsCache ทันที)
   document.getElementById("convSearchInput")?.addEventListener("input", renderConversationList);
 
-  // Auth Tabs & Register role toggle
+  // แท็บสลับโหมดใน Auth Modal และสลับฟิลด์ข้อมูลร้านค้าเมื่อเลือกสมัครบทบาท "Seller"
   document.querySelectorAll(".auth-tab").forEach(tab => {
     tab.addEventListener("click", () => openAuthModal(tab.dataset.authTab));
   });
@@ -1451,12 +1752,16 @@
       .forEach(inp => { inp.required = isSeller; });
   });
 
-  // Login Form
+  // ฟอร์มเข้าสู่ระบบ (Login Form)
   document.getElementById("loginForm").addEventListener("submit", async e => {
     e.preventDefault();
     const form = e.currentTarget;
     const fd = new FormData(form);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/auth/login -> AuthController.Login
+      // ข้อมูลที่ส่ง: JSON `{ email, password }`
+      // ผลลัพธ์จากหลังบ้าน: ตั้งค่า Auth Cookie (Set-Cookie) + คืน JSON `{ message }` -> ปิด Modal, แสดง Toast และรีเฟรช Session เข้าหน้าแรกตามบทบาท
       const res = await api("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") })
@@ -1468,12 +1773,16 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Register Form
+  // ฟอร์มสมัครสมาชิกใหม่ (Register Form: Buyer หรือ Seller)
   document.getElementById("registerForm").addEventListener("submit", async e => {
     e.preventDefault();
     const form = e.currentTarget;
     const fd = new FormData(form);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/auth/register -> AuthController.Register
+      // ข้อมูลที่ส่ง: JSON `{ displayName, email, password, role, shopName, phone, bankAccount, sellerBio }`
+      // ผลลัพธ์จากหลังบ้าน: สร้างบัญชี, ออก Auth Cookie และคืน JSON `{ message }` -> รีเซ็ตฟอร์ม, ปิด Modal และรีเฟรช Session
       const res = await api("/api/auth/register", {
         method: "POST",
         body: JSON.stringify({
@@ -1497,7 +1806,7 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Notification Bell Toggle & Mark All Read
+  // ปุ่มกระดิ่งแจ้งเตือน (เปิด/ปิด Dropdown) และปุ่ม "อ่านทั้งหมดแล้ว"
   document.getElementById("notifBellBtn")?.addEventListener("click", async e => {
     e.stopPropagation();
     const dropdown = document.getElementById("notifDropdown");
@@ -1509,6 +1818,10 @@
   document.getElementById("markAllReadBtn")?.addEventListener("click", async e => {
     e.stopPropagation();
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/notifications/read-all -> NotificationsController.MarkAllRead
+      // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (ไม่มี body)
+      // ผลลัพธ์จากหลังบ้าน: อัปเดตสถานะการแจ้งเตือนและข้อความแชททั้งหมดเป็นอ่านแล้ว -> เคลียร์ unreadCount ในแคชและอัปเดต Badge
       await api("/api/notifications/read-all", { method: "POST" });
       conversationsCache.forEach(c => { c.unreadCount = 0; });
       if (activeView === "messages") renderConversationList();
@@ -1517,11 +1830,12 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Bid Form inside auctionDialog
+  // ฟอร์มยืนยันเสนอราคา (`#bidForm`) ที่ถูกสร้างแบบไดนามิกภายใน `auctionDialog` (ใช้ Event Delegation บน dialog)
   auctionDialog.addEventListener("submit", async e => {
     if (e.target.id !== "bidForm") return;
     e.preventDefault();
     const form = e.target;
+    // ตรวจสอบเวลาปิดประมูลฝั่งหน้าบ้านทันทีเพื่อป้องกันการกดบิดหลังหมดเวลา
     if (form.dataset.endAt && parseUtcDate(form.dataset.endAt).getTime() <= Date.now()) {
       showToast("รายการนี้ปิดประมูลแล้ว ไม่สามารถเสนอราคาได้", true);
       await openProduct(selectedProductId);
@@ -1530,6 +1844,11 @@
     }
     const amount = Number(new FormData(form).get("bid"));
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/auctions/{selectedProductId}/bid -> AuctionsController.PlaceBid
+      // ข้อมูลที่ส่ง: JSON `{ amount }` (จำนวนเงินที่เสนอ) + Route Parameter `selectedProductId`
+      // ผลลัพธ์จากหลังบ้าน: บันทึกการเสนอราคา (และต่อเวลาอัตโนมัติ 2 นาทีหากใกล้หมดเวลา) คืน JSON `{ message }`
+      // -> โหลดรายละเอียดสินค้าใหม่เพื่ออัปเดตราคาสูงสุด/ประวัติบิด และรีเฟรชหน้าร้านหรือหน้าประวัติบิด
       const res = await api(`/api/auctions/${selectedProductId}/bid`, {
         method: "POST",
         body: JSON.stringify({ amount })
@@ -1539,19 +1858,24 @@
       if (activeView === "today") await loadAuctions();
       else if (activeView === "mybids") await loadBuyerDashboard();
     } catch (err) {
+      // กรณีมีคนบิดตัดหน้าหรือราคาต่ำกว่าเกณฑ์ ให้แจ้ง Error และรีเฟรชราคาสูงสุดล่าสุดมาแสดงทันที
       showToast(err.message, true);
       await openProduct(selectedProductId);
       if (activeView === "today") await loadAuctions();
     }
   });
 
-  // Seller: Upload product image file
+  // ฝั่งผู้ขาย: อัปโหลดไฟล์รูปภาพสินค้าทันทีที่เลือกไฟล์ เพื่อรับ URL กลับมากรอกในช่อง imageUrl อัตโนมัติ
   document.getElementById("listingImageFile")?.addEventListener("change", async e => {
     const file = e.currentTarget.files?.[0];
     if (!file) return;
     const fd = new FormData();
     fd.append("file", file);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/seller/upload-image -> SellerController.UploadProductImage
+      // ข้อมูลที่ส่ง: multipart/form-data (`FormData` ฟิลด์ `file`)
+      // ผลลัพธ์จากหลังบ้าน: JSON `{ imageUrl, message }` (บันทึกไฟล์ลง wwwroot/uploads) -> เติม URL และแสดงรูปตัวอย่าง Preview
       const res = await api("/api/seller/upload-image", { method: "POST", body: fd });
       document.getElementById("listingImageUrlInput").value = res.imageUrl;
       document.getElementById("listingImagePreview").src = res.imageUrl;
@@ -1562,12 +1886,16 @@
     }
   });
 
-  // Seller: Create Listing Form
+  // ฝั่งผู้ขาย: ฟอร์มลงขายสินค้าประมูลชิ้นใหม่
   document.getElementById("listingForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const form = e.currentTarget;
     const fd = new FormData(form);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/seller/listings -> SellerController.CreateListing
+      // ข้อมูลที่ส่ง: JSON `{ name, categoryId, condition, description, imageUrl, startPrice, minIncrement, startAt (UTC ISO), endAt (UTC ISO) }`
+      // ผลลัพธ์จากหลังบ้าน: สร้างสินค้าสถานะ Pending รอแอดมินอนุมัติ คืน JSON `{ message }` -> รีเซ็ตฟอร์มและรีโหลดแดชบอร์ดผู้ขาย
       const res = await api("/api/seller/listings", {
         method: "POST",
         body: JSON.stringify({
@@ -1590,12 +1918,17 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Forgot & Reset Password Forms
+  // ฟอร์มลืมรหัสผ่าน (ขอรหัสรีเซ็ต 6 หลัก) และฟอร์มตั้งรหัสผ่านใหม่
   document.getElementById("forgotPasswordForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const form = e.currentTarget;
     const email = String(new FormData(form).get("email") || "").trim();
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/auth/forgot-password -> AuthController.ForgotPassword
+      // ข้อมูลที่ส่ง: JSON `{ email }`
+      // ผลลัพธ์จากหลังบ้าน: JSON `{ message, devResetCode? }` (ในโหมด Development จะส่งรหัส 6 หลักกลับมาแสดงช่วยทดสอบ)
+      // -> กรอกอีเมลและรหัสลงในฟอร์ม `#resetPasswordForm` ให้อัตโนมัติ
       const res = await api("/api/auth/forgot-password", {
         method: "POST",
         body: JSON.stringify({ email })
@@ -1617,6 +1950,10 @@
     const form = e.currentTarget;
     const fd = new FormData(form);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/auth/reset-password -> AuthController.ResetPassword
+      // ข้อมูลที่ส่ง: JSON `{ email, resetToken, newPassword }`
+      // ผลลัพธ์จากหลังบ้าน: ตรวจรหัสรีเซ็ตและอัปเดตรหัสผ่านใหม่ คืน JSON `{ message }` -> ล้างฟอร์มและสลับกลับไปแท็บเข้าสู่ระบบ
       const res = await api("/api/auth/reset-password", {
         method: "POST",
         body: JSON.stringify({
@@ -1632,11 +1969,15 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Seller: Reapply Form
+  // ฝั่งผู้ขาย (ที่เคยถูกปฏิเสธ): ฟอร์มแก้ไขข้อมูลและส่งใบสมัครผู้ขายใหม่อีกครั้ง
   document.getElementById("sellerReapplyForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/seller/apply -> SellerController.UpdateApplication
+      // ข้อมูลที่ส่ง: JSON `{ shopName, phone, bankAccount, sellerBio }`
+      // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะใบสมัครเป็น Pending รอแอดมินตรวจใหม่ คืน JSON `{ message }` -> รีโหลดแดชบอร์ดผู้ขาย
       const res = await api("/api/seller/apply", {
         method: "POST",
         body: JSON.stringify({
@@ -1651,11 +1992,15 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Buyer: Apply to become Seller (consolidated endpoint)
+  // ฝั่งผู้ซื้อ (Buyer): ฟอร์มยื่นคำขออัปเกรดบัญชีเป็นผู้ขาย (ใช้ Endpoint เดียวกับผู้ขายที่สมัครใหม่)
   document.getElementById("buyerApplySellerForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/seller/apply -> SellerController.UpdateApplication
+      // ข้อมูลที่ส่ง: JSON `{ shopName, phone, bankAccount, sellerBio }`
+      // ผลลัพธ์จากหลังบ้าน: JSON `{ message, user }` อัปเดตข้อมูลใบสมัครในผู้ใช้ -> อัปเดต `currentUser` และแสดงแบนเนอร์รออนุมัติ
       const res = await api("/api/seller/apply", {
         method: "POST",
         body: JSON.stringify({
@@ -1671,7 +2016,7 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Chat Send Form
+  // ฟอร์มส่งข้อความในห้องแชทปัจจุบัน
   document.getElementById("chatForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     if (!activeConversationId) return;
@@ -1679,6 +2024,10 @@
     const body = input.value.trim();
     if (!body) return;
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/chat/conversations/{activeConversationId}/messages -> ChatController.SendMessage
+      // ข้อมูลที่ส่ง: JSON `{ body }` (ข้อความแชท) + Route Parameter `activeConversationId`
+      // ผลลัพธ์จากหลังบ้าน: บันทึกข้อความลงฐานข้อมูล -> ล้างช่องพิมพ์, โหลดห้องแชทใหม่ และโฟกัสกลับที่ช่องพิมพ์
       await api(`/api/chat/conversations/${activeConversationId}/messages`, {
         method: "POST",
         body: JSON.stringify({ body })
@@ -1689,7 +2038,7 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Admin: Category Add/Edit Form
+  // ฝั่งแอดมิน: ฟอร์มเพิ่มหมวดหมู่สินค้าใหม่ หรือแก้ไขหมวดหมู่เดิม (ดูจากว่ามีค่า hidden field `id` หรือไม่)
   document.getElementById("adminCategoryForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -1702,6 +2051,11 @@
       isActive: true
     };
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint (โหมดแก้ไข): PUT /api/admin/categories/{id} -> AdminController.UpdateCategory
+      // Endpoint (โหมดเพิ่มใหม่): POST /api/admin/categories -> AdminController.CreateCategory
+      // ข้อมูลที่ส่ง: JSON `{ name, symbol, description, isActive }`
+      // ผลลัพธ์จากหลังบ้าน: JSON `{ message }` -> รีเซ็ตฟอร์มกลับเป็นโหมดเพิ่มใหม่และรีโหลดแดชบอร์ดแอดมิน
       const res = id
         ? await api(`/api/admin/categories/${id}`, { method: "PUT", body: JSON.stringify(payload) })
         : await api("/api/admin/categories", { method: "POST", body: JSON.stringify(payload) });
@@ -1715,6 +2069,7 @@
     } catch (err) { showToast(err.message, true); }
   });
 
+  // ปุ่มยกเลิกการแก้ไขหมวดหมู่ (ล้างค่าฟอร์มกลับสู่โหมดเพิ่มหมวดหมู่ใหม่)
   document.getElementById("catCancelEditBtn")?.addEventListener("click", () => {
     const form = document.getElementById("adminCategoryForm");
     form.reset();
@@ -1724,11 +2079,15 @@
     document.getElementById("catCancelEditBtn").classList.add("hidden");
   });
 
-  // Finance: Update Settings Form
+  // ฝั่งฝ่ายการเงิน: ฟอร์มอัปเดตกติกาส่วนลด ค่าธรรมเนียม ขั้นต่ำการบิด และบัญชีกลาง PromptPay
   document.getElementById("financeRulesForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     try {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: PUT /api/finance/settings -> FinanceController.UpdateSettings
+      // ข้อมูลที่ส่ง: JSON `{ sameCategoryDiscountPercent, platformFeePercent, globalMinBidIncrement, platformPromptPayId, platformAccountName }`
+      // ผลลัพธ์จากหลังบ้าน: อัปเดตกติกาส่วนกลางในฐานข้อมูลพร้อมบันทึก Audit Log คืน JSON `{ message }` -> รีโหลดแดชบอร์ดการเงิน
       const res = await api("/api/finance/settings", {
         method: "PUT",
         body: JSON.stringify({
@@ -1744,15 +2103,19 @@
     } catch (err) { showToast(err.message, true); }
   });
 
-  // Delegated Clicks
+  // ==================== 16. ตัวดักจับการคลิกแบบ DELEGATION ทั้งหน้าเว็บ (GLOBAL CLICK DELEGATION) ====================
+  // ใช้ Event Delegation ผูก listener เพียงตัวเดียวที่ `document` เพื่อรองรับปุ่มทุกตัวที่ถูกเรนเดอร์แบบไดนามิกด้วย `innerHTML`
+  // โดยจำแนกคำสั่งจาก `data-*` attribute ของปุ่มที่ถูกคลิก
   document.addEventListener("click", async event => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
 
+    // คลิกนอกกล่องแจ้งเตือน (#notifWrapper) ให้พับปิด Dropdown แจ้งเตือนอัตโนมัติ
     if (!target.closest("#notifWrapper")) {
       document.getElementById("notifDropdown")?.classList.add("hidden");
     }
 
+    // คลิกที่รายการแจ้งเตือนใน Dropdown -> ทำเครื่องหมายว่าอ่านแล้วและพาไปยังหน้า/ห้องแชท/สินค้าที่เกี่ยวข้อง
     const notifItem = target.closest("[data-notif-view]");
     if (notifItem) {
       const notifId = notifItem.dataset.notifId;
@@ -1760,6 +2123,10 @@
       const refId = notifItem.dataset.notifRef ? Number(notifItem.dataset.notifRef) : null;
       document.getElementById("notifDropdown")?.classList.add("hidden");
       if (notifId) {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/notifications/{notifId}/read -> NotificationsController.MarkRead
+        // ข้อมูลที่ส่ง: Route Parameter `notifId` (+ Auth Cookie)
+        // ผลลัพธ์จากหลังบ้าน: ทำเครื่องหมายว่ารายการแจ้งเตือนนี้ถูกอ่านแล้ว (ยิงแบบ fire-and-forget)
         api(`/api/notifications/${notifId}/read`, { method: "POST" }).catch(() => {});
       }
       if (targetView === "messages" && refId) {
@@ -1775,14 +2142,14 @@
       return;
     }
 
-    // Auth tab buttons (including Forgot Password links)
+    // ปุ่มสลับแท็บในหน้าต่าง Auth (รวมลิงก์ "ลืมรหัสผ่าน?" ที่อยู่ในฟอร์ม)
     const authTabBtn = target.closest("[data-auth-tab]");
     if (authTabBtn) {
       await openAuthModal(authTabBtn.dataset.authTab);
       return;
     }
 
-    // Audit Log filter buttons
+    // ปุ่มกรองบทบาทในหน้า Audit Log (all / Admin / Finance / Seller / Buyer)
     const auditFilterBtn = target.closest("[data-audit-filter]");
     if (auditFilterBtn) {
       document.querySelectorAll("[data-audit-filter]").forEach(b => b.classList.toggle("active", b === auditFilterBtn));
@@ -1790,7 +2157,7 @@
       return;
     }
 
-    // Change Password Modal
+    // ปุ่มเปิด Modal เปลี่ยนรหัสผ่าน (สำหรับผู้ใช้ที่ล็อกอินอยู่)
     if (target.closest("[data-open-change-pw]")) {
       document.getElementById("actionDialogContent").innerHTML = `
         <h2 class="auth-title">เปลี่ยนรหัสผ่าน</h2>
@@ -1808,6 +2175,10 @@
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         try {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/auth/change-password -> AuthController.ChangePassword
+          // ข้อมูลที่ส่ง: JSON `{ currentPassword, newPassword }` (+ Auth Cookie)
+          // ผลลัพธ์จากหลังบ้าน: ตรวจรหัสเดิมและอัปเดตรหัสใหม่ คืน JSON `{ message }` -> แสดง Toast และปิด Modal
           const res = await api("/api/auth/change-password", {
             method: "POST",
             body: JSON.stringify({ currentPassword: fd.get("currentPassword"), newPassword: fd.get("newPassword") })
@@ -1820,7 +2191,7 @@
       return;
     }
 
-    // Seller: Edit Pending/Rejected Listing
+    // ฝั่งผู้ขาย: เปิด Modal แก้ไขสินค้าที่ยังรอตรวจ (Pending) หรือถูกปฏิเสธ (Rejected)
     const editListBtn = target.closest("[data-edit-listing]");
     if (editListBtn) {
       const item = sellerListingsCache.find(x => x.id === Number(editListBtn.dataset.editListing));
@@ -1864,6 +2235,10 @@
         const fd = new FormData();
         fd.append("file", file);
         try {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/seller/upload-image -> SellerController.UploadProductImage
+          // ข้อมูลที่ส่ง: multipart/form-data (`FormData` ฟิลด์ `file`)
+          // ผลลัพธ์จากหลังบ้าน: JSON `{ imageUrl, message }` -> อัปเดตช่อง `#editListingImgUrl` ด้วย URL รูปใหม่
           const res = await api("/api/seller/upload-image", { method: "POST", body: fd });
           document.getElementById("editListingImgUrl").value = res.imageUrl;
           showToast(res.message);
@@ -1873,6 +2248,10 @@
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         try {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: PUT /api/seller/listings/{item.id} -> SellerController.UpdateListing
+          // ข้อมูลที่ส่ง: JSON ข้อมูลสินค้าที่แก้ไขครบทุกฟิลด์ + Route Parameter `item.id`
+          // ผลลัพธ์จากหลังบ้าน: อัปเดตสินค้าและเปลี่ยนสถานะเป็น Pending ส่งตรวจใหม่ คืน JSON `{ message }` -> ปิด Modal และรีโหลดแดชบอร์ดผู้ขาย
           const res = await api(`/api/seller/listings/${item.id}`, {
             method: "PUT",
             body: JSON.stringify({
@@ -1896,11 +2275,15 @@
       return;
     }
 
-    // Seller: Cancel/Delete Pending or Rejected Listing
+    // ฝั่งผู้ขาย: ยกเลิก/ลบรายการสินค้าที่ยังรอตรวจหรือถูกปฏิเสธ
     const delListBtn = target.closest("[data-delete-listing]");
     if (delListBtn) {
       if (!window.confirm(`ยืนยันยกเลิกรายการสินค้า “${delListBtn.dataset.name}” ใช่หรือไม่?`)) return;
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: DELETE /api/seller/listings/{id} -> SellerController.DeleteListing
+        // ข้อมูลที่ส่ง: Route Parameter `id` (+ Auth Cookie สิทธิ์เจ้าของสินค้า)
+        // ผลลัพธ์จากหลังบ้าน: ลบสินค้าออกจากฐานข้อมูล คืน JSON `{ message }` -> แสดง Toast และรีโหลดแดชบอร์ดผู้ขาย
         const res = await api(`/api/seller/listings/${delListBtn.dataset.deleteListing}`, { method: "DELETE" });
         showToast(res.message);
         await loadSellerDashboard();
@@ -1908,11 +2291,13 @@
       return;
     }
 
+    // ปุ่มปิด Modal อเนกประสงค์ (`actionDialog`)
     if (target.closest("[data-close-action]")) {
       actionDialog.close();
       return;
     }
 
+    // ปุ่มเมนูเปลี่ยนหน้าจอ (View Link) ทั้งบน Sidebar และปุ่มลิงก์ภายในหน้า
     const viewLink = target.closest("[data-view-link]");
     if (viewLink) {
       event.preventDefault();
@@ -1920,21 +2305,32 @@
       return;
     }
 
+    // ปุ่มเปิดหน้าต่างเข้าสู่ระบบ / สลับบัญชี
     if (target.closest("[data-open-auth]")) {
       await openAuthModal("login");
       return;
     }
 
+    // ปุ่มออกจากระบบ (Logout)
     if (target.closest("#logoutBtn")) {
+      // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+      // Endpoint: POST /api/auth/logout -> AuthController.Logout
+      // ข้อมูลที่ส่ง: Auth Cookie อัตโนมัติ (ไม่มี body)
+      // ผลลัพธ์จากหลังบ้าน: ล้าง Auth Cookie ใน Browser -> แสดง Toast และรีเฟรช Session กลับหน้าสาธารณะ
       await api("/api/auth/logout", { method: "POST" });
       showToast("ออกจากระบบแล้ว");
       await refreshSession(true);
       return;
     }
 
+    // การ์ดคลิกล็อกอินด่วนด้วยบัญชีทดลอง (Demo Account 4 บทบาท ใช้รหัสผ่านมาตรฐาน "123456")
     const demoBtn = target.closest("[data-demo-email]");
     if (demoBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/auth/login -> AuthController.Login
+        // ข้อมูลที่ส่ง: JSON `{ email: demoBtn.dataset.demoEmail, password: "123456" }`
+        // ผลลัพธ์จากหลังบ้าน: ออก Auth Cookie ของบัญชีทดลอง คืน JSON `{ message }` -> ปิด Modal และพาเข้าหน้าหลักของบทบาทนั้น
         const res = await api("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({ email: demoBtn.dataset.demoEmail, password: "123456" })
@@ -1946,6 +2342,7 @@
       return;
     }
 
+    // ชิปเลือกกรองตามหมวดหมู่สินค้าในหน้า "ประมูลวันนี้"
     const catBtn = target.closest("[data-category]");
     if (catBtn) {
       activeCategoryId = Number(catBtn.dataset.category || 0);
@@ -1953,9 +2350,14 @@
       return;
     }
 
+    // ปุ่มหัวใจ (♡ / ♥) บันทึกหรือนำออกจากรายการที่สนใจ (Watchlist Toggle)
     const saveBtn = target.closest("[data-save]");
     if (saveBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/auctions/{id}/save -> AuctionsController.ToggleSave
+        // ข้อมูลที่ส่ง: Route Parameter `id` (+ Auth Cookie)
+        // ผลลัพธ์จากหลังบ้าน: สลับสถานะการบันทึกสินค้า คืน JSON `{ message }` -> รีเฟรชหน้าร้านหรือหน้า "รายการที่สนใจ"
         const res = await api(`/api/auctions/${saveBtn.dataset.save}/save`, { method: "POST" });
         showToast(res.message);
         if (activeView === "today") await loadAuctions();
@@ -1964,6 +2366,7 @@
       return;
     }
 
+    // คลิกที่การ์ดสินค้า / ชื่อสินค้า / ปุ่มดูรายละเอียด เพื่อเปิด Modal รายละเอียดและเสนอราคา
     const detailBtn = target.closest("[data-detail]");
     if (detailBtn) {
       event.preventDefault();
@@ -1971,20 +2374,21 @@
       return;
     }
 
+    // ปุ่มเลื่อนหน้าจอแบบนุ่มนวลไปยังส่วนเป้าหมาย (Smooth Scroll)
     const scrollBtn = target.closest("[data-scroll]");
     if (scrollBtn) {
       document.getElementById(scrollBtn.dataset.scroll)?.scrollIntoView({ behavior: "smooth" });
       return;
     }
 
-    // View Payment Slip Modal
+    // ปุ่ม "ดูสลิป" เปิด Modal แสดงภาพหลักฐานการโอนเงินขนาดเต็ม
     const slipBtn = target.closest("[data-view-slip]");
     if (slipBtn) {
       openSlipModal(slipBtn.dataset.viewSlip, slipBtn.dataset.slipTitle || "หลักฐานการชำระเงิน", slipBtn.dataset.slipNote || "");
       return;
     }
 
-    // Buyer: Open Hybrid Checkout Modal (QR Escrow or Direct to Seller)
+    // ฝั่งผู้ซื้อ: เปิด Modal ชำระเงินแบบผสม (QR ระบบกลาง Escrow หรือ จ่ายตรงผู้ขาย)
     const payBtn = target.closest("[data-pay-order]");
     if (payBtn) {
       const order = buyerOrdersCache.find(o => o.id === Number(payBtn.dataset.payOrder));
@@ -1993,10 +2397,14 @@
       return;
     }
 
-    // Seller: Verify Direct Payment (Approve / Reject)
+    // ฝั่งผู้ขาย: ยืนยันรับเงินกรณีผู้ซื้อเลือกจ่ายตรง (DirectToSeller)
     const sellerVerifyBtn = target.closest("[data-seller-verify-pay]");
     if (sellerVerifyBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/seller/orders/{orderId}/verify-payment -> SellerController.VerifyDirectPayment
+        // ข้อมูลที่ส่ง: JSON `{ approve: true }` + Route Parameter `orderId`
+        // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะชำระเงินเป็น Paid และ payout เป็น DirectSettled คืน JSON `{ message }` -> รีโหลดแดชบอร์ดผู้ขาย
         const res = await api(`/api/seller/orders/${sellerVerifyBtn.dataset.sellerVerifyPay}/verify-payment`, {
           method: "POST", body: JSON.stringify({ approve: true })
         });
@@ -2006,6 +2414,7 @@
       return;
     }
 
+    // ฝั่งผู้ขาย: ปฏิเสธการแจ้งชำระเงินตรง (เปิด Modal กรอกเหตุผลแจ้งกลับผู้ซื้อ)
     const sellerRejectPayBtn = target.closest("[data-seller-reject-pay]");
     if (sellerRejectPayBtn) {
       showReasonModal({
@@ -2015,6 +2424,10 @@
         placeholder: "เช่น ยังไม่พบยอดโอนเข้าบัญชี หรือยอดเงินไม่ครบถ้วน",
         submitText: "ยืนยันปฏิเสธ",
         onSubmit: async reason => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/seller/orders/{orderId}/verify-payment -> SellerController.VerifyDirectPayment
+          // ข้อมูลที่ส่ง: JSON `{ approve: false, reason }`
+          // ผลลัพธ์จากหลังบ้าน: รีเซ็ตสถานะออเดอร์กลับเป็น Unpaid พร้อมบันทึกเหตุผลและแจ้งเตือนผู้ซื้อ -> รีโหลดแดชบอร์ดผู้ขาย
           const res = await api(`/api/seller/orders/${sellerRejectPayBtn.dataset.sellerRejectPay}/verify-payment`, {
             method: "POST", body: JSON.stringify({ approve: false, reason })
           });
@@ -2025,10 +2438,14 @@
       return;
     }
 
-    // Finance: Verify Escrow Slip (Approve / Reject)
+    // ฝั่งฝ่ายการเงิน: อนุมัติสลิปการโอนเงินเข้าระบบกลาง (Escrow)
     const finVerifyBtn = target.closest("[data-finance-verify-pay]");
     if (finVerifyBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/finance/orders/{orderId}/verify-payment -> FinanceController.VerifyEscrowPayment
+        // ข้อมูลที่ส่ง: JSON `{ approve: true }` + Route Parameter `orderId`
+        // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะเป็น Paid และแจ้งผู้ขายให้นัดรับ/ส่งมอบ คืน JSON `{ message }` -> รีโหลดแดชบอร์ดการเงิน
         const res = await api(`/api/finance/orders/${finVerifyBtn.dataset.financeVerifyPay}/verify-payment`, {
           method: "POST", body: JSON.stringify({ approve: true })
         });
@@ -2038,6 +2455,7 @@
       return;
     }
 
+    // ฝั่งฝ่ายการเงิน: ปฏิเสธสลิปโอนเงินเข้าระบบกลาง (ให้ผู้ซื้ออัปโหลดใหม่)
     const finRejectPayBtn = target.closest("[data-finance-reject-pay]");
     if (finRejectPayBtn) {
       showReasonModal({
@@ -2047,6 +2465,10 @@
         placeholder: "เช่น สลิปไม่ชัดเจน หรือยอดโอนไม่ตรงกับยอดสุทธิ",
         submitText: "ยืนยันปฏิเสธสลิป",
         onSubmit: async reason => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/finance/orders/{orderId}/verify-payment -> FinanceController.VerifyEscrowPayment
+          // ข้อมูลที่ส่ง: JSON `{ approve: false, reason }`
+          // ผลลัพธ์จากหลังบ้าน: รีเซ็ตออเดอร์เป็น Unpaid พร้อมเหตุผลและแจ้งเตือนผู้ซื้อ -> รีโหลดแดชบอร์ดการเงิน
           const res = await api(`/api/finance/orders/${finRejectPayBtn.dataset.financeRejectPay}/verify-payment`, {
             method: "POST", body: JSON.stringify({ approve: false, reason })
           });
@@ -2057,10 +2479,14 @@
       return;
     }
 
-    // Buyer: Confirm Received
+    // ฝั่งผู้ซื้อ: กดยืนยันว่าได้รับสินค้าเรียบร้อยแล้ว (ปลดล็อกให้ฝ่ายการเงินปล่อยเงิน Escrow ให้ผู้ขายได้)
     const recBtn = target.closest("[data-confirm-received]");
     if (recBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/buyer/orders/{orderId}/confirm-received -> AuctionsController.ConfirmReceived
+        // ข้อมูลที่ส่ง: Route Parameter `orderId` (+ Auth Cookie สิทธิ์ผู้ซื้อ)
+        // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะนัดรับเป็น Completed คืน JSON `{ message }` -> แสดง Toast และรีโหลดแดชบอร์ดผู้ซื้อ
         const res = await api(`/api/buyer/orders/${recBtn.dataset.confirmReceived}/confirm-received`, { method: "POST" });
         showToast(res.message);
         await loadBuyerDashboard();
@@ -2068,10 +2494,14 @@
       return;
     }
 
-    // Start Chat or Open Conversation
+    // แชท: เริ่มสร้างห้องสนทนาใหม่กับผู้ขายจากหน้าสินค้า หรือเปิดห้องแชทที่มีอยู่แล้ว
     const startChatBtn = target.closest("[data-start-chat]");
     if (startChatBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/chat/start -> ChatController.StartConversation
+        // ข้อมูลที่ส่ง: JSON `{ auctionItemId }` (+ Auth Cookie)
+        // ผลลัพธ์จากหลังบ้าน: JSON `{ conversationId }` (สร้างห้องใหม่หรือคืนห้องเดิม) -> ปิด Modal สินค้าและสลับไปหน้ากล่องข้อความ
         const res = await api("/api/chat/start", {
           method: "POST",
           body: JSON.stringify({ auctionItemId: Number(startChatBtn.dataset.startChat) })
@@ -2083,6 +2513,7 @@
       return;
     }
 
+    // ปุ่มเปิดห้องแชทโดยระบุ `conversationId` โดยตรง (จากตารางออเดอร์ผู้ซื้อ/ผู้ขาย)
     const openConvBtn = target.closest("[data-open-conv]");
     if (openConvBtn) {
       activeConversationId = Number(openConvBtn.dataset.openConv);
@@ -2090,13 +2521,14 @@
       return;
     }
 
+    // คลิกเลือกห้องสนทนาจากแถบรายชื่อด้านซ้ายในหน้ากล่องข้อความ
     const selConvBtn = target.closest("[data-select-conv]");
     if (selConvBtn) {
       await openConversation(Number(selConvBtn.dataset.selectConv));
       return;
     }
 
-    // Report Dispute from Chat
+    // ปุ่ม "แจ้งข้อพิพาท" จากภายในห้องแชท -> เปิด Modal กรอกรายละเอียดร้องเรียนให้แอดมินตรวจสอบ
     const dispBtn = target.closest("[data-report-dispute]");
     if (dispBtn) {
       const convId = Number(dispBtn.dataset.reportDispute);
@@ -2126,6 +2558,10 @@
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         try {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/chat/conversations/{convId}/dispute -> ChatController.ReportDispute
+          // ข้อมูลที่ส่ง: JSON `{ reason, details, orderPaymentId }` + Route Parameter `convId`
+          // ผลลัพธ์จากหลังบ้าน: สร้างเคสข้อพิพาท (ล็อกการปล่อยเงินชั่วคราวและเปิดสิทธิ์ให้ Admin อ่านแชทเคสนี้) คืน JSON `{ message }` -> ปิด Modal และรีโหลดห้องแชท
           const res = await api(`/api/chat/conversations/${convId}/dispute`, {
             method: "POST",
             body: JSON.stringify({ reason: fd.get("reason"), details: fd.get("details"), orderPaymentId: orderId })
@@ -2139,7 +2575,7 @@
       return;
     }
 
-    // Seller: View Bid History of own item
+    // ฝั่งผู้ขาย: เปิด Modal ดูตารางประวัติการเสนอราคาทั้งหมดของสินค้าตัวเอง (ดึงจาก `sellerListingsCache`)
     const sellerBidsBtn = target.closest("[data-view-seller-bids]");
     if (sellerBidsBtn) {
       const item = sellerListingsCache.find(x => x.id === Number(sellerBidsBtn.dataset.viewSellerBids));
@@ -2161,7 +2597,7 @@
       return;
     }
 
-    // Seller: Schedule Meetup Modal
+    // ฝั่งผู้ขาย: เปิด Modal กำหนดสถานที่และวันเวลานัดรับสินค้า
     const meetupBtn = target.closest("[data-schedule-meetup]");
     if (meetupBtn) {
       const orderId = Number(meetupBtn.dataset.scheduleMeetup);
@@ -2184,6 +2620,10 @@
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         try {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/seller/orders/{orderId}/meetup -> SellerController.ScheduleMeetup
+          // ข้อมูลที่ส่ง: JSON `{ location, meetupAt (UTC ISO), note }` + Route Parameter `orderId`
+          // ผลลัพธ์จากหลังบ้าน: บันทึกนัดรับและส่งข้อความแจ้งเข้าห้องแชทผู้ซื้ออัตโนมัติ คืน JSON `{ message }` -> ปิด Modal และรีโหลดแดชบอร์ดผู้ขาย
           const res = await api(`/api/seller/orders/${orderId}/meetup`, {
             method: "POST",
             body: JSON.stringify({
@@ -2201,10 +2641,14 @@
       return;
     }
 
-    // Seller: Confirm Delivered
+    // ฝั่งผู้ขาย: กดยืนยันว่าได้ส่งมอบสินค้าให้ผู้ซื้อแล้ว
     const deliverBtn = target.closest("[data-confirm-deliver]");
     if (deliverBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/seller/orders/{orderId}/deliver -> SellerController.ConfirmDelivered
+        // ข้อมูลที่ส่ง: Route Parameter `orderId` (+ Auth Cookie สิทธิ์ผู้ขาย)
+        // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะนัดรับเป็น Delivered และแจ้งเตือนผู้ซื้อ คืน JSON `{ message }` -> รีโหลดแดชบอร์ดผู้ขาย
         const res = await api(`/api/seller/orders/${deliverBtn.dataset.confirmDeliver}/deliver`, { method: "POST" });
         showToast(res.message);
         await loadSellerDashboard();
@@ -2212,10 +2656,14 @@
       return;
     }
 
-    // Admin: Approve/Reject Seller
+    // ฝั่งแอดมิน: อนุมัติใบสมัครผู้ขาย
     const appSellerBtn = target.closest("[data-approve-seller]");
     if (appSellerBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/admin/sellers/{userId}/review -> AdminController.ReviewSeller
+        // ข้อมูลที่ส่ง: JSON `{ approve: true }` + Route Parameter `userId`
+        // ผลลัพธ์จากหลังบ้าน: เปลี่ยน Role/สถานะผู้สมัครเป็นผู้ขายที่อนุมัติแล้ว + บันทึก Audit Log คืน JSON `{ message }` -> รีโหลดแดชบอร์ดแอดมิน
         const res = await api(`/api/admin/sellers/${appSellerBtn.dataset.approveSeller}/review`, {
           method: "POST", body: JSON.stringify({ approve: true })
         });
@@ -2225,6 +2673,7 @@
       return;
     }
 
+    // ฝั่งแอดมิน: ปฏิเสธใบสมัครผู้ขาย (พร้อมระบุเหตุผล)
     const rejSellerBtn = target.closest("[data-reject-seller]");
     if (rejSellerBtn) {
       showReasonModal({
@@ -2234,6 +2683,10 @@
         placeholder: "เช่น ข้อมูลบัญชีรับเงินไม่ชัดเจน",
         submitText: "ยืนยันปฏิเสธ",
         onSubmit: async reason => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/admin/sellers/{userId}/review -> AdminController.ReviewSeller
+          // ข้อมูลที่ส่ง: JSON `{ approve: false, reason }`
+          // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะใบสมัครเป็น Rejected พร้อมเหตุผล + Audit Log -> รีโหลดแดชบอร์ดแอดมิน
           const res = await api(`/api/admin/sellers/${rejSellerBtn.dataset.rejectSeller}/review`, {
             method: "POST", body: JSON.stringify({ approve: false, reason })
           });
@@ -2244,10 +2697,14 @@
       return;
     }
 
-    // Admin: Approve/Reject Auction
+    // ฝั่งแอดมิน: อนุมัติสินค้าประมูลขึ้นหน้าร้าน
     const appAucBtn = target.closest("[data-approve-auction]");
     if (appAucBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/admin/auctions/{itemId}/review -> AdminController.ReviewAuction
+        // ข้อมูลที่ส่ง: JSON `{ approve: true }` + Route Parameter `itemId`
+        // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะสินค้าเป็น Approved เปิดแสดงในตลาดประมูล -> รีโหลดแดชบอร์ดแอดมิน
         const res = await api(`/api/admin/auctions/${appAucBtn.dataset.approveAuction}/review`, {
           method: "POST", body: JSON.stringify({ approve: true })
         });
@@ -2257,6 +2714,7 @@
       return;
     }
 
+    // ฝั่งแอดมิน: ปฏิเสธสินค้าประมูล (พร้อมระบุเหตุผลให้ผู้ขายแก้ไข)
     const rejAucBtn = target.closest("[data-reject-auction]");
     if (rejAucBtn) {
       showReasonModal({
@@ -2266,6 +2724,10 @@
         placeholder: "เช่น ภาพถ่ายไม่ชัดเจนหรือรายละเอียดไม่ครบถ้วน",
         submitText: "ยืนยันปฏิเสธสินค้า",
         onSubmit: async reason => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/admin/auctions/{itemId}/review -> AdminController.ReviewAuction
+          // ข้อมูลที่ส่ง: JSON `{ approve: false, reason }`
+          // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะสินค้าเป็น Rejected พร้อมเหตุผล -> รีโหลดแดชบอร์ดแอดมิน
           const res = await api(`/api/admin/auctions/${rejAucBtn.dataset.rejectAuction}/review`, {
             method: "POST", body: JSON.stringify({ approve: false, reason })
           });
@@ -2276,7 +2738,7 @@
       return;
     }
 
-    // Admin: Suspend / Unsuspend User
+    // ฝั่งแอดมิน: ระงับบัญชีผู้ใช้ (พร้อมระบุเหตุผล)
     const suspBtn = target.closest("[data-suspend-user]");
     if (suspBtn) {
       showReasonModal({
@@ -2286,6 +2748,10 @@
         placeholder: "เช่น ละเมิดกติกาการประมูลซ้ำหลายครั้ง",
         submitText: "ยืนยันระงับบัญชี",
         onSubmit: async reason => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/admin/users/{userId}/suspend -> AdminController.SuspendUser
+          // ข้อมูลที่ส่ง: JSON `{ suspend: true, reason }`
+          // ผลลัพธ์จากหลังบ้าน: ตั้งค่า `IsSuspended = true` และบันทึกเหตุผล -> รีโหลดแดชบอร์ดแอดมิน
           const res = await api(`/api/admin/users/${suspBtn.dataset.suspendUser}/suspend`, {
             method: "POST", body: JSON.stringify({ suspend: true, reason })
           });
@@ -2296,9 +2762,14 @@
       return;
     }
 
+    // ฝั่งแอดมิน: ปลดระงับบัญชีผู้ใช้ให้กลับมาใช้งานได้ปกติ
     const unsuspBtn = target.closest("[data-unsuspend-user]");
     if (unsuspBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: POST /api/admin/users/{userId}/suspend -> AdminController.SuspendUser
+        // ข้อมูลที่ส่ง: JSON `{ suspend: false }`
+        // ผลลัพธ์จากหลังบ้าน: ตั้งค่า `IsSuspended = false` -> รีโหลดแดชบอร์ดแอดมิน
         const res = await api(`/api/admin/users/${unsuspBtn.dataset.unsuspendUser}/suspend`, {
           method: "POST", body: JSON.stringify({ suspend: false })
         });
@@ -2308,7 +2779,7 @@
       return;
     }
 
-    // Admin: Edit / Delete Category
+    // ฝั่งแอดมิน: เติมข้อมูลหมวดหมู่เดิมลงใน `#adminCategoryForm` เพื่อเข้าสู่โหมดแก้ไข
     const editCatBtn = target.closest("[data-edit-cat]");
     if (editCatBtn) {
       const form = document.getElementById("adminCategoryForm");
@@ -2322,9 +2793,14 @@
       return;
     }
 
+    // ฝั่งแอดมิน: ลบหรือปิดใช้งานหมวดหมู่สินค้า (ถ้ามีสินค้าผูกอยู่ หลังบ้านจะ Soft-disable ให้แทนการลบจริง)
     const delCatBtn = target.closest("[data-delete-cat]");
     if (delCatBtn) {
       try {
+        // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+        // Endpoint: DELETE /api/admin/categories/{id} -> AdminController.DeleteCategory
+        // ข้อมูลที่ส่ง: Route Parameter `id` (+ Auth Cookie สิทธิ์ Admin)
+        // ผลลัพธ์จากหลังบ้าน: ลบหรือปิดการใช้งานหมวดหมู่ คืน JSON `{ message }` -> รีโหลดแดชบอร์ดแอดมิน
         const res = await api(`/api/admin/categories/${delCatBtn.dataset.deleteCat}`, { method: "DELETE" });
         showToast(res.message);
         await loadAdminDashboard();
@@ -2332,14 +2808,14 @@
       return;
     }
 
-    // Admin: Inspect Dispute Chat
+    // ฝั่งแอดมิน: เปิด Modal ตรวจสอบแชทและจัดการเคสข้อพิพาท
     const inspDispBtn = target.closest("[data-inspect-dispute]");
     if (inspDispBtn) {
       await openDisputeInspector(Number(inspDispBtn.dataset.inspectDispute));
       return;
     }
 
-    // Finance: Release Payout
+    // ฝั่งฝ่ายการเงิน: ปล่อยเงินโอนสุทธิให้ผู้ขาย (หลังยืนยันส่งมอบ/รับสินค้าและไม่มีข้อพิพาทค้าง)
     const relBtn = target.closest("[data-finance-release]");
     if (relBtn) {
       showReasonModal({
@@ -2350,6 +2826,10 @@
         submitText: "ยืนยันปล่อยเงิน",
         danger: false,
         onSubmit: async note => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/finance/orders/{orderId}/release -> FinanceController.ReleasePayout
+          // ข้อมูลที่ส่ง: JSON `{ note }` + Route Parameter `orderId`
+          // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะ `PayoutStatus = Released` + บันทึก Audit Log คืน JSON `{ message }` -> รีโหลดแดชบอร์ดการเงิน
           const res = await api(`/api/finance/orders/${relBtn.dataset.financeRelease}/release`, {
             method: "POST", body: JSON.stringify({ note })
           });
@@ -2360,7 +2840,7 @@
       return;
     }
 
-    // Finance: Refund Buyer
+    // ฝั่งฝ่ายการเงิน: คืนเงินให้ผู้ซื้อ (กรณีข้อพิพาทหรือยกเลิกออเดอร์)
     const refBtn = target.closest("[data-finance-refund]");
     if (refBtn) {
       showReasonModal({
@@ -2371,6 +2851,10 @@
         submitText: "ยืนยันคืนเงิน",
         danger: true,
         onSubmit: async note => {
+          // 🔗 [จุดเชื่อมต่อ หน้าบ้าน -> หลังบ้าน]
+          // Endpoint: POST /api/finance/orders/{orderId}/refund -> FinanceController.RefundOrder
+          // ข้อมูลที่ส่ง: JSON `{ note }` + Route Parameter `orderId`
+          // ผลลัพธ์จากหลังบ้าน: เปลี่ยนสถานะการชำระเงินและปล่อยเงินเป็น Refunded + Audit Log คืน JSON `{ message }` -> รีโหลดแดชบอร์ดการเงิน
           const res = await api(`/api/finance/orders/${refBtn.dataset.financeRefund}/refund`, {
             method: "POST", body: JSON.stringify({ note })
           });
@@ -2382,7 +2866,9 @@
     }
   });
 
-  // Live countdown ticker based on real UTC ISO endAt
+  // ==================== 17. ตัวนับเวลาถอยหลังแบบเรียลไทม์ (LIVE COUNTDOWN TICKER) ====================
+  // ทำงานทุก 1 วินาที เพื่ออัปเดตข้อความเวลาคงเหลือบนการ์ดสินค้าและใน Modal ตามเวลาจริง `endAt` (UTC ISO)
+  // และเมื่อมีสินค้าใดเพิ่งหมดเวลา จะล็อกฟอร์มเสนอราคาทันทีแล้วหน่วง 600ms เพื่อซิงก์สถานะปิดประมูลจากหลังบ้าน
   let expirySyncPending = false;
   window.setInterval(() => {
     let anyExpiredJustNow = false;
@@ -2397,7 +2883,7 @@
       }
     });
 
-    // Immediately lock bid form inside open dialog once expired
+    // ล็อกช่องกรอกและปุ่มเสนอราคาภายใน Modal สินค้าที่เปิดค้างอยู่ทันทีเมื่อหมดเวลา
     const openBidForm = document.getElementById("bidForm");
     if (openBidForm && openBidForm.dataset.endAt && parseUtcDate(openBidForm.dataset.endAt).getTime() <= Date.now()) {
       openBidForm.querySelectorAll("input, button").forEach(ctrl => { ctrl.disabled = true; });
@@ -2406,6 +2892,7 @@
       anyExpiredJustNow = true;
     }
 
+    // ป้องกันการยิงรีเฟรชซ้ำซ้อนด้วยแฟล็ก `expirySyncPending` แล้วค่อยดึงข้อมูลปิดประมูลล่าสุดจากหลังบ้าน
     if (anyExpiredJustNow && !expirySyncPending) {
       expirySyncPending = true;
       window.setTimeout(async () => {
@@ -2418,10 +2905,13 @@
     }
   }, 1000);
 
-  // Boot
+  // ==================== 18. เริ่มต้นการทำงานของแอปพลิเคชัน (APP BOOT / INITIALIZATION) ====================
+  // 1) แสดงวันที่ปัจจุบันภาษาไทยบนแถบส่วนหัวของหน้าแรก
   document.getElementById("todayDate").textContent = new Intl.DateTimeFormat("th-TH", {
     weekday: "long", day: "numeric", month: "long", year: "numeric"
   }).format(new Date());
+  // 2) ตั้งค่าวันเวลาเริ่มต้น/สิ้นสุดประมูลตั้งต้นในฟอร์มลงขายสินค้า
   initListingDates();
+  // 3) ตรวจสอบ Session ผู้ใช้จากหลังบ้าน (`GET /api/auth/me`) และโหลดหน้าแรกของบทบาทที่เหมาะสม
   refreshSession(true).catch(err => showToast(err.message, true));
 })();
